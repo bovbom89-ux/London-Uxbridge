@@ -1,4 +1,3 @@
-
 const {
   Client,
   GatewayIntentBits,
@@ -34,6 +33,7 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
+// Temporary records are reset when the bot restarts.
 const shifts = new Map();
 const warnings = new Map();
 const modlogs = new Map();
@@ -82,9 +82,7 @@ async function panelReply(
 }
 
 function recordAction(guildId, userId, action, reason, moderatorId) {
-  if (!modlogs.has(guildId)) {
-    modlogs.set(guildId, []);
-  }
+  if (!modlogs.has(guildId)) modlogs.set(guildId, []);
 
   modlogs.get(guildId).push({
     userId,
@@ -96,22 +94,27 @@ function recordAction(guildId, userId, action, reason, moderatorId) {
 }
 
 const commands = [
+  // 1
   new SlashCommandBuilder()
     .setName("ping")
     .setDescription("Check whether the bot is responding"),
 
+  // 2
   new SlashCommandBuilder()
     .setName("information")
     .setDescription("View information about London, Uxbridge"),
 
+  // 3
   new SlashCommandBuilder()
     .setName("rules")
     .setDescription("View the server rules"),
 
+  // 4
   new SlashCommandBuilder()
     .setName("help")
     .setDescription("Get help and access the support server"),
 
+  // 5
   new SlashCommandBuilder()
     .setName("host-shift")
     .setDescription("Start or end a hosted shift")
@@ -125,10 +128,12 @@ const commands = [
         )
     ),
 
+  // 6
   new SlashCommandBuilder()
     .setName("shift-stats")
     .setDescription("View your shift statistics"),
 
+  // 7
   new SlashCommandBuilder()
     .setName("military-operation")
     .setDescription("Manage a military operation")
@@ -148,6 +153,7 @@ const commands = [
         .setRequired(false)
     ),
 
+  // 8
   new SlashCommandBuilder()
     .setName("training-session")
     .setDescription("Announce a training session")
@@ -157,6 +163,7 @@ const commands = [
         .setRequired(true)
     ),
 
+  // 9
   new SlashCommandBuilder()
     .setName("warn")
     .setDescription("Warn a member")
@@ -174,6 +181,7 @@ const commands = [
         .setRequired(true)
     ),
 
+  // 10
   new SlashCommandBuilder()
     .setName("timeout")
     .setDescription("Timeout a member")
@@ -198,6 +206,7 @@ const commands = [
         .setRequired(true)
     ),
 
+  // 11
   new SlashCommandBuilder()
     .setName("kick")
     .setDescription("Kick a member")
@@ -215,6 +224,7 @@ const commands = [
         .setRequired(true)
     ),
 
+  // 12
   new SlashCommandBuilder()
     .setName("ban")
     .setDescription("Ban a member")
@@ -232,6 +242,7 @@ const commands = [
         .setRequired(true)
     ),
 
+  // 13
   new SlashCommandBuilder()
     .setName("purge")
     .setDescription("Delete recent messages")
@@ -246,6 +257,7 @@ const commands = [
         .setMaxValue(100)
     ),
 
+  // 14
   new SlashCommandBuilder()
     .setName("userinfo")
     .setDescription("View information about a member")
@@ -255,6 +267,7 @@ const commands = [
         .setRequired(true)
     ),
 
+  // 15
   new SlashCommandBuilder()
     .setName("modlogs")
     .setDescription("View recorded moderation actions")
@@ -267,6 +280,7 @@ const commands = [
         .setRequired(true)
     ),
 
+  // 16
   new SlashCommandBuilder()
     .setName("announce")
     .setDescription("Publish a server announcement")
@@ -282,7 +296,7 @@ const commands = [
 
 client.once("clientReady", async () => {
   console.log(`Logged in as ${client.user.tag}`);
-  console.log("Registering slash commands...");
+  console.log("Registering 16 slash commands...");
 
   try {
     const rest = new REST({ version: "10" }).setToken(TOKEN);
@@ -483,13 +497,7 @@ client.on("interactionCreate", async interaction => {
           date: Date.now()
         });
 
-        recordAction(
-          guild.id,
-          target.id,
-          "Warning",
-          reason,
-          user.id
-        );
+        recordAction(guild.id, target.id, "Warning", reason, user.id);
 
         return panelReply(interaction, "Warning recorded", [
           `Member: ${target}`,
@@ -506,13 +514,7 @@ client.on("interactionCreate", async interaction => {
 
         await member.timeout(minutes * 60000, reason);
 
-        recordAction(
-          guild.id,
-          target.id,
-          "Timeout",
-          reason,
-          user.id
-        );
+        recordAction(guild.id, target.id, "Timeout", reason, user.id);
 
         return panelReply(interaction, "Member timed out", [
           `Member: ${target}`,
@@ -529,13 +531,7 @@ client.on("interactionCreate", async interaction => {
 
         await member.kick(reason);
 
-        recordAction(
-          guild.id,
-          target.id,
-          "Kick",
-          reason,
-          user.id
-        );
+        recordAction(guild.id, target.id, "Kick", reason, user.id);
 
         return panelReply(interaction, "Member kicked", [
           `Member: ${target.tag}`,
@@ -550,13 +546,7 @@ client.on("interactionCreate", async interaction => {
 
         await guild.members.ban(target.id, { reason });
 
-        recordAction(
-          guild.id,
-          target.id,
-          "Ban",
-          reason,
-          user.id
-        );
+        recordAction(guild.id, target.id, "Ban", reason, user.id);
 
         return panelReply(interaction, "Member banned", [
           `Member: ${target.tag}`,
