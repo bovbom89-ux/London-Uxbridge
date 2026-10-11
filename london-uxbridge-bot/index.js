@@ -1,3 +1,4 @@
+require("dotenv").config();
 
 const {
   Client,
@@ -9,10 +10,14 @@ const {
   MessageFlags,
   ContainerBuilder,
   TextDisplayBuilder,
-  SeparatorBuilder
+  SeparatorBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
 } = require("discord.js");
 
-require("dotenv").config();
+const fs = require("node:fs");
+const path = require("node:path");
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
@@ -20,178 +25,317 @@ const GUILD_ID =
   process.env.DISCORD_GUILD_ID || process.env.GUILD_ID;
 
 const SUPPORT_URL = "https://discord.gg/DeuwuZFXN";
-const FOOTER = "London, Uxbridge";
-
-if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
-  console.error(
-    "Missing DISCORD_TOKEN, DISCORD_CLIENT_ID or DISCORD_GUILD_ID."
-  );
-  process.exit(1);
-}
+const BRAND = "London, Uxbridge";
+const ACCENT = 0x3F5378;
+const ONE_HOUR = 60 * 60 * 1000;
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers
+  ]
 });
 
-// Temporary records reset when the bot restarts.
-const shifts = new Map();
-const warnings = new Map();
-const modlogs = new Map();
-const operations = new Map();
+// Persistent data
+const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_FILE = path.join(DATA_DIR, "bot-data.json");
 
-function makePanel(title, sections = []) {
-  const container = new ContainerBuilder();
+fs.mkdirSync(DATA_DIR, { recursive: true });
 
-  container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(`# ${title}`)
-  );
-
-  for (const section of sections) {
-    container.addSeparatorComponents(
-      new SeparatorBuilder().setDivider(true)
-    );
-
-    container.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(String(section))
-    );
+function loadData() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+    }
+  } catch (error) {
+    console.error("Could not load saved data:", error);
   }
 
-  container.addSeparatorComponents(
-    new SeparatorBuilder().setDivider(true)
-  );
+  return {
+    shifts: [],
+    operations: [],
+    modlogs: []
+  };
+}
 
-  container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(`-# ${FOOTER}`)
-  );
+const savedData = loadData();
+
+const shifts = new Map(
+  (savedData.shifts || []).map(item => [item.id, item])
+);
+
+const operations = new Map(
+  (savedData.operations || []).map(item => [item.id, item])
+);
+
+const modlogs = new Map(savedData.modlogs || []);
+
+function saveData() {
+  try {
+    fs.writeFileSync(
+      DATA_FILE,
+      JSON.stringify({
+        shifts: [...shifts.values()],
+        operations: [...operations.values()],
+        modlogs: [...modlogs.entries()]
+      }, null, 2)
+    );
+  } catch (error) {
+    console.error("Could not save bot data:", error);
+  }
+}
+
+// Components V2 message builder
+function makeV2(title, description, options = {}) {
+  const container = new ContainerBuilder()
+    .setAccentColor(options.color ?? ACCENT)
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `# ${title}\n\n${description}`
+      )
+    )
+    .addSeparatorComponents(
+      new SeparatorBuilder().setDivider(true)
+    )
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `-# ${BRAND}`
+      )
+    );
+
+  if (options.supportButton) {
+    container.addActionRowComponents(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel("Join Support Server")
+          .setStyle(ButtonStyle.Link)
+          .setURL(SUPPORT_URL)
+      )
+    );
+  }
 
   return container;
 }
 
-async function panelReply(
-  interaction,
-  title,
-  sections = [],
-  ephemeral = false
-) {
-  return interaction.reply({
-    components: [makePanel(title, sections)],
+async function sendV2(channel, title, description, options = {}) {
+  return channel.send({
+    components: [makeV2(title, description, options)],
+    flags: MessageFlags.IsComponentsV2,
+    allowedMentions: { parse: [] }
+  });
+}
+
+async function replyV2(interaction, title, description, options = {}) {
+  const payload = {
+    components: [makeV2(title, description, options)],
     flags:
       MessageFlags.IsComponentsV2 |
-      (ephemeral ? MessageFlags.Ephemeral : 0)
-  });
-}
+      (options.ephemeral ? MessageFlags.Ephemeral : 0),
+    allowedMentions: { parse: [] }
+  };
 
-function recordAction(guildId, userId, action, reason, moderatorId) {
-  if (!modlogs.has(guildId)) {
-    modlogs.set(guildId, []);
+  if (interaction.replied || interaction.deferred) {
+    return interaction.followUp(payload);
   }
 
-  modlogs.get(guildId).push({
-    userId,
-    action,
-    reason,
-    moderatorId,
-    date: Date.now()
-  });
+  return interaction.reply(payload);
 }
 
+function getReason(interaction) {
+  return interaction.options.getString("reason") ||
+    "No reason provided.";
+}
+
+function addModlog(guildId, userId, action) {
+  const key = `${guildId}:${userId}`;
+  const entries = modlogs.get(key) || [];
+
+  entries.push({
+    action,
+    moderator: "Unknown",
+    timestamp: Date.now()
+  });
+
+  modlogs.set(key, entries.slice(-50));
+  saveData();
+}
+
+function recordModlog(guildId, userId, action, moderatorId) {
+  const key = `${guildId}:${userId}`;
+  const entries = modlogs.get(key) || [];
+
+  entries.push({
+    action,
+    moderator: moderatorId,
+    timestamp: Date.now()
+  });
+
+  modlogs.set(key, entries.slice(-50));
+  saveData();
+}
+
+// Timed shift and operation announcements
+async function endAutomatically(record) {
+  try {
+    const channel = await client.channels.fetch(record.channelId);
+
+    if (channel && channel.isTextBased()) {
+      const elapsed = Math.max(
+        0,
+        Math.floor((record.endsAt - record.startedAt) / 60000)
+      );
+
+      const isShift = record.type === "shift";
+
+      await sendV2(
+        channel,
+        isShift ? "Staff Shift Has Ended" : "Military Operation Has Ended",
+        `**Host:** ${record.hostName}\n` +
+        `**Host ID:** \`${record.hostId}\`\n` +
+        `**Started:** <t:${Math.floor(record.startedAt / 1000)}:F>\n` +
+        `**Ended:** <t:${Math.floor(record.endsAt / 1000)}:F>\n` +
+        `**Duration:** ${elapsed} minutes\n` +
+        `**Information:** ${record.details || "No additional details."}\n\n` +
+        "The scheduled one-hour session has now concluded.",
+        { color: 0x718096 }
+      );
+    }
+  } catch (error) {
+    console.error("Could not send automatic ending message:", error);
+  } finally {
+    if (record.type === "shift") {
+      shifts.delete(record.id);
+    } else {
+      operations.delete(record.id);
+    }
+
+    saveData();
+  }
+}
+
+function scheduleEnding(record) {
+  const remaining = record.endsAt - Date.now();
+
+  if (remaining <= 0) {
+    endAutomatically(record);
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    endAutomatically(record);
+  }, remaining);
+
+  if (typeof timer.unref === "function") {
+    timer.unref();
+  }
+}
+
+function startTimedSession(record) {
+  if (record.type === "shift") {
+    shifts.set(record.id, record);
+  } else {
+    operations.set(record.id, record);
+  }
+
+  saveData();
+  scheduleEnding(record);
+}
+
+// Slash commands
 const commands = [
   new SlashCommandBuilder()
     .setName("ping")
-    .setDescription("Check whether the bot is responding"),
+    .setDescription("Check the bot's online status and latency."),
 
   new SlashCommandBuilder()
     .setName("information")
-    .setDescription("View information about London, Uxbridge"),
+    .setDescription("View information about London, Uxbridge."),
 
   new SlashCommandBuilder()
     .setName("rules")
-    .setDescription("View the server rules"),
+    .setDescription("View the server rules and conduct expectations."),
 
   new SlashCommandBuilder()
     .setName("help")
-    .setDescription("Get help and access the support server"),
+    .setDescription("Open the London, Uxbridge support server."),
 
   new SlashCommandBuilder()
-    .setName("host-shift")
-    .setDescription("Start or end a hosted shift")
-    .addStringOption(option =>
+    .setName("userinfo")
+    .setDescription("View account and server membership information.")
+    .addUserOption(option =>
       option
-        .setName("action")
-        .setDescription("Choose an action")
-        .setRequired(true)
-        .addChoices(
-          { name: "Start shift", value: "start" },
-          { name: "End shift", value: "end" }
-        )
+        .setName("user")
+        .setDescription("The user whose information you want to view.")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
-    .setName("shift-stats")
-    .setDescription("View your shift statistics"),
+    .setName("staff-shift")
+    .setDescription("Host a staff shift with an automatic one-hour ending.")
+    .addStringOption(option =>
+      option
+        .setName("information")
+        .setDescription("Information about the shift.")
+        .setRequired(false)
+    ),
 
   new SlashCommandBuilder()
     .setName("military-operation")
-    .setDescription("Manage a military operation")
-    .addStringOption(option =>
-      option
-        .setName("action")
-        .setDescription("Choose an action")
-        .setRequired(true)
-        .addChoices(
-          { name: "Start", value: "start" },
-          { name: "End", value: "end" },
-          { name: "Status", value: "status" }
-        )
-    )
+    .setDescription("Host a military operation lasting one hour.")
     .addStringOption(option =>
       option
         .setName("name")
-        .setDescription("Operation name")
+        .setDescription("The name of the military operation.")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName("information")
+        .setDescription("Additional operation information.")
         .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("training-session")
-    .setDescription("Announce a training session")
+    .setDescription("Announce a staff training session.")
     .addStringOption(option =>
       option
-        .setName("details")
-        .setDescription("Training details and time")
+        .setName("information")
+        .setDescription("Training details, time and location.")
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("warn")
-    .setDescription("Warn a member")
+    .setDescription("Issue and record a warning for a server member.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
     .addUserOption(option =>
       option
         .setName("user")
-        .setDescription("Member to warn")
+        .setDescription("The member receiving the warning.")
         .setRequired(true)
     )
     .addStringOption(option =>
       option
         .setName("reason")
-        .setDescription("Reason for the warning")
-        .setRequired(true)
+        .setDescription("The reason for the warning.")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("timeout")
-    .setDescription("Timeout a member")
+    .setDescription("Temporarily prevent a member from communicating.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
     .addUserOption(option =>
       option
         .setName("user")
-        .setDescription("Member to timeout")
+        .setDescription("The member to timeout.")
         .setRequired(true)
     )
     .addIntegerOption(option =>
       option
         .setName("minutes")
-        .setDescription("Duration in minutes")
+        .setDescription("Timeout duration in minutes (1–40320).")
         .setRequired(true)
         .setMinValue(1)
         .setMaxValue(40320)
@@ -199,434 +343,493 @@ const commands = [
     .addStringOption(option =>
       option
         .setName("reason")
-        .setDescription("Reason for the timeout")
-        .setRequired(true)
+        .setDescription("The reason for the timeout.")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("kick")
-    .setDescription("Kick a member")
+    .setDescription("Remove a member from the server.")
     .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
     .addUserOption(option =>
       option
         .setName("user")
-        .setDescription("Member to kick")
+        .setDescription("The member to kick.")
         .setRequired(true)
     )
     .addStringOption(option =>
       option
         .setName("reason")
-        .setDescription("Reason for the kick")
-        .setRequired(true)
+        .setDescription("The reason for the kick.")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("ban")
-    .setDescription("Ban a member")
+    .setDescription("Ban a user from the server.")
     .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
     .addUserOption(option =>
       option
         .setName("user")
-        .setDescription("Member to ban")
+        .setDescription("The user to ban.")
         .setRequired(true)
     )
     .addStringOption(option =>
       option
         .setName("reason")
-        .setDescription("Reason for the ban")
-        .setRequired(true)
+        .setDescription("The reason for the ban.")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("purge")
-    .setDescription("Delete recent messages")
+    .setDescription("Bulk-delete up to 100 recent messages.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
     .addIntegerOption(option =>
       option
         .setName("amount")
-        .setDescription("Number of messages to delete")
+        .setDescription("The number of messages to delete (1–100).")
         .setRequired(true)
         .setMinValue(1)
         .setMaxValue(100)
     ),
 
   new SlashCommandBuilder()
-    .setName("userinfo")
-    .setDescription("View information about a member")
-    .addUserOption(option =>
-      option
-        .setName("user")
-        .setDescription("Member to inspect")
-        .setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
     .setName("modlogs")
-    .setDescription("View recorded moderation actions")
+    .setDescription("View recorded moderation actions for a user.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
     .addUserOption(option =>
       option
         .setName("user")
-        .setDescription("Member to inspect")
+        .setDescription("The user whose moderation history to view.")
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("announce")
-    .setDescription("Publish a server announcement")
+    .setDescription("Post a formatted server announcement.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addStringOption(option =>
       option
         .setName("message")
-        .setDescription("Announcement text")
+        .setDescription("The announcement message.")
         .setRequired(true)
     )
 ];
 
-// Register the current commands when the bot starts.
-client.once("clientReady", async () => {
+// Bot startup
+client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
+
+  if (!CLIENT_ID || !GUILD_ID) {
+    console.error(
+      "Missing DISCORD_CLIENT_ID or DISCORD_GUILD_ID/GUILD_ID."
+    );
+    return;
+  }
 
   try {
     const rest = new REST({ version: "10" }).setToken(TOKEN);
 
-    // Remove old global commands belonging to this application.
-    await rest.put(
-      Routes.applicationCommands(CLIENT_ID),
-      { body: [] }
-    );
-
-    // Register the 16 commands in the configured server.
     await rest.put(
       Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
       { body: commands.map(command => command.toJSON()) }
     );
 
-    console.log(
-      `Successfully registered ${commands.length} slash commands.`
-    );
+    console.log(`Registered ${commands.length} slash commands.`);
+
+    // Restore active timers after a restart.
+    for (const record of shifts.values()) {
+      scheduleEnding(record);
+    }
+
+    for (const record of operations.values()) {
+      scheduleEnding(record);
+    }
+
+    console.log("Restored saved session timers.");
   } catch (error) {
-    console.error("Slash command registration failed:", error);
+    console.error("Startup or command registration failed:", error);
   }
 });
 
+// Command handler
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  const guild = interaction.guild;
-  const user = interaction.user;
-
   try {
-    if (!guild) {
-      return panelReply(
+    const command = interaction.commandName;
+
+    if (command === "ping") {
+      return replyV2(
         interaction,
-        "Server required",
-        ["Please use this command inside the server."],
-        true
+        "Pong!",
+        `**Status:** Online\n**Latency:** ${client.ws.ping} ms`
       );
     }
 
-    switch (interaction.commandName) {
-      case "ping":
-        return panelReply(interaction, "Bot status", [
-          `WebSocket latency: ${client.ws.ping} ms`
-        ]);
+    if (command === "information") {
+      return replyV2(
+        interaction,
+        "London, Uxbridge",
+        "Welcome to **London, Uxbridge**.\n\n" +
+        "This bot supports server operations, staff shifts, training sessions and moderation.\n\n" +
+        `**Support:** [Join our support server](${SUPPORT_URL})`
+      );
+    }
 
-      case "information":
-        return panelReply(interaction, "London, Uxbridge", [
-          "Welcome to London, Uxbridge.",
-          "Please follow the server rules and treat everyone respectfully."
-        ]);
+    if (command === "rules") {
+      return replyV2(
+        interaction,
+        "Server Rules",
+        "**1. Respect everyone.** Treat members and staff appropriately.\n\n" +
+        "**2. Follow staff instructions.** Cooperate with authorised staff.\n\n" +
+        "**3. No spam.** Keep channels organised and relevant.\n\n" +
+        "**4. No abuse of commands.** Use moderation and operation commands responsibly.\n\n" +
+        "**5. Follow Discord's Terms of Service.**\n\n" +
+        "**6. Use the correct channels.** Keep discussions in their appropriate places."
+      );
+    }
 
-      case "rules":
-        return panelReply(interaction, "Server rules", [
-          "**1. Respect**\nTreat other members respectfully.",
-          "**2. Staff instructions**\nFollow legitimate staff instructions.",
-          "**3. Conduct**\nDo not spam or disrupt the server.",
-          "**4. Channels**\nUse the correct channels.",
-          "**5. Discord**\nFollow Discord's Terms of Service."
-        ]);
+    if (command === "help") {
+      return replyV2(
+        interaction,
+        "London, Uxbridge Support",
+        "Need help with the bot or server?\n\n" +
+        "Join our support server using the button below to get assistance.",
+        { supportButton: true }
+      );
+    }
 
-      case "help":
-        return interaction.reply({
-          content: `Need help? Join our support server: ${SUPPORT_URL}`
-        });
+    if (command === "userinfo") {
+      const user =
+        interaction.options.getUser("user") || interaction.user;
 
-      case "host-shift": {
-        const action = interaction.options.getString("action");
-        const key = `${guild.id}:${user.id}`;
+      const member = await interaction.guild.members
+        .fetch(user.id)
+        .catch(() => null);
 
-        if (action === "start") {
-          if (shifts.has(key)) {
-            return panelReply(
-              interaction,
-              "Shift already active",
-              ["You already have a shift in progress."],
-              true
-            );
-          }
+      const joined = member?.joinedAt
+        ? `<t:${Math.floor(member.joinedAt.getTime() / 1000)}:F>`
+        : "Not a member of this server.";
 
-          shifts.set(key, { started: Date.now() });
+      return replyV2(
+        interaction,
+        "User Information",
+        `**Username:** ${user.username}\n` +
+        `**Mention:** <@${user.id}>\n` +
+        `**User ID:** \`${user.id}\`\n` +
+        `**Account Created:** <t:${Math.floor(user.createdAt.getTime() / 1000)}:F>\n` +
+        `**Joined Server:** ${joined}\n` +
+        `**Bot Account:** ${user.bot ? "Yes" : "No"}`
+      );
+    }
 
-          return panelReply(interaction, "Shift started", [
-            `Host: ${user}`,
-            `Started: <t:${Math.floor(Date.now() / 1000)}:F>`
-          ]);
-        }
+    if (command === "staff-shift") {
+      const host = interaction.user;
+      const id = `${interaction.guildId}:${host.id}`;
+      const channel = interaction.channel;
 
-        const shift = shifts.get(key);
-
-        if (!shift) {
-          return panelReply(
-            interaction,
-            "No active shift",
-            ["You do not have a shift in progress."],
-            true
-          );
-        }
-
-        const minutes = Math.floor(
-          (Date.now() - shift.started) / 60000
+      if (!channel || !channel.isTextBased()) {
+        return replyV2(
+          interaction,
+          "Unable to Start Shift",
+          "Use this command in a text channel.",
+          { ephemeral: true }
         );
-
-        shifts.delete(key);
-
-        return panelReply(interaction, "Shift ended", [
-          `Host: ${user}`,
-          `Duration: ${minutes} minutes`
-        ]);
       }
 
-      case "shift-stats": {
-        const shift = shifts.get(`${guild.id}:${user.id}`);
-
-        return panelReply(interaction, "Shift statistics", [
-          `Member: ${user}`,
-          shift
-            ? `Current shift started <t:${Math.floor(shift.started / 1000)}:R>.`
-            : "You have no active shift.",
-          "Historical shift totals are not stored."
-        ], true);
-      }
-
-      case "military-operation": {
-        const action = interaction.options.getString("action");
-        const name =
-          interaction.options.getString("name") || "Untitled operation";
-
-        if (action === "start") {
-          if (operations.has(guild.id)) {
-            return panelReply(
-              interaction,
-              "Operation already active",
-              [`Current operation: ${operations.get(guild.id).name}`],
-              true
-            );
-          }
-
-          operations.set(guild.id, {
-            name,
-            leader: user.id,
-            started: Date.now()
-          });
-
-          return panelReply(interaction, "Operation started", [
-            `Name: ${name}`,
-            `Leader: ${user}`,
-            `Started: <t:${Math.floor(Date.now() / 1000)}:F>`
-          ]);
-        }
-
-        if (action === "end") {
-          const operation = operations.get(guild.id);
-
-          if (!operation) {
-            return panelReply(
-              interaction,
-              "No active operation",
-              ["There is no operation to end."],
-              true
-            );
-          }
-
-          operations.delete(guild.id);
-
-          return panelReply(interaction, "Operation ended", [
-            `Name: ${operation.name}`,
-            `Ended by: ${user}`
-          ]);
-        }
-
-        const operation = operations.get(guild.id);
-
-        return panelReply(interaction, "Operation status", [
-          operation
-            ? `Active operation: ${operation.name}\nLeader: <@${operation.leader}>`
-            : "There is no active operation."
-        ]);
-      }
-
-      case "training-session":
-        return panelReply(interaction, "Training session", [
-          `Organiser: ${user}`,
-          interaction.options.getString("details")
-        ]);
-
-      case "warn": {
-        const target = interaction.options.getUser("user");
-        const reason = interaction.options.getString("reason");
-        const key = `${guild.id}:${target.id}`;
-
-        if (!warnings.has(key)) {
-          warnings.set(key, []);
-        }
-
-        warnings.get(key).push({
-          reason,
-          moderatorId: user.id,
-          date: Date.now()
-        });
-
-        recordAction(guild.id, target.id, "Warning", reason, user.id);
-
-        return panelReply(interaction, "Warning recorded", [
-          `Member: ${target}`,
-          `Reason: ${reason}`,
-          `Moderator: ${user}`
-        ], true);
-      }
-
-      case "timeout": {
-        const target = interaction.options.getUser("user");
-        const minutes = interaction.options.getInteger("minutes");
-        const reason = interaction.options.getString("reason");
-        const member = await guild.members.fetch(target.id);
-
-        await member.timeout(minutes * 60000, reason);
-
-        recordAction(guild.id, target.id, "Timeout", reason, user.id);
-
-        return panelReply(interaction, "Member timed out", [
-          `Member: ${target}`,
-          `Duration: ${minutes} minutes`,
-          `Reason: ${reason}`,
-          `Moderator: ${user}`
-        ], true);
-      }
-
-      case "kick": {
-        const target = interaction.options.getUser("user");
-        const reason = interaction.options.getString("reason");
-        const member = await guild.members.fetch(target.id);
-
-        await member.kick(reason);
-
-        recordAction(guild.id, target.id, "Kick", reason, user.id);
-
-        return panelReply(interaction, "Member kicked", [
-          `Member: ${target.tag}`,
-          `Reason: ${reason}`,
-          `Moderator: ${user}`
-        ], true);
-      }
-
-      case "ban": {
-        const target = interaction.options.getUser("user");
-        const reason = interaction.options.getString("reason");
-
-        await guild.members.ban(target.id, { reason });
-
-        recordAction(guild.id, target.id, "Ban", reason, user.id);
-
-        return panelReply(interaction, "Member banned", [
-          `Member: ${target.tag}`,
-          `Reason: ${reason}`,
-          `Moderator: ${user}`
-        ], true);
-      }
-
-      case "purge": {
-        const amount = interaction.options.getInteger("amount");
-
-        if (!interaction.channel?.isTextBased()) {
-          return panelReply(
-            interaction,
-            "Cannot purge messages",
-            ["This command requires a text channel."],
-            true
-          );
-        }
-
-        const deleted = await interaction.channel.bulkDelete(amount, true);
-
-        return panelReply(interaction, "Messages deleted", [
-          `Deleted ${deleted.size} messages.`,
-          "Messages older than 14 days cannot be bulk deleted."
-        ], true);
-      }
-
-      case "userinfo": {
-        const target = interaction.options.getUser("user");
-        const member = await guild.members.fetch(target.id).catch(() => null);
-
-        return panelReply(interaction, "User information", [
-          `Username: ${target.tag}`,
-          `User ID: ${target.id}`,
-          `Account created: <t:${Math.floor(target.createdTimestamp / 1000)}:F>`,
-          member
-            ? `Joined server: <t:${Math.floor(member.joinedTimestamp / 1000)}:F>`
-            : "This user is not currently a server member."
-        ]);
-      }
-
-      case "modlogs": {
-        const target = interaction.options.getUser("user");
-
-        const records = (modlogs.get(guild.id) || [])
-          .filter(record => record.userId === target.id)
-          .slice(-10);
-
-        const lines = records.map(record =>
-          `**${record.action}** — ${record.reason}\nModerator: <@${record.moderatorId}> · <t:${Math.floor(record.date / 1000)}:R>`
+      if (shifts.has(id)) {
+        return replyV2(
+          interaction,
+          "Shift Already Active",
+          "You already have an active staff shift.",
+          { ephemeral: true }
         );
-
-        return panelReply(interaction, "Moderation records", [
-          `Member: ${target}`,
-          ...(lines.length
-            ? lines
-            : ["No moderation records found during this session."])
-        ], true);
       }
 
-      case "announce": {
-        const message = interaction.options.getString("message");
+      const now = Date.now();
+      const details =
+        interaction.options.getString("information") ||
+        "No additional information provided.";
 
-        return panelReply(interaction, "Announcement", [
-          message,
-          `Published by ${user}`
-        ]);
+      const record = {
+        id,
+        type: "shift",
+        guildId: interaction.guildId,
+        channelId: channel.id,
+        hostId: host.id,
+        hostName: host.username,
+        details,
+        startedAt: now,
+        endsAt: now + ONE_HOUR
+      };
+
+      startTimedSession(record);
+
+      return replyV2(
+        interaction,
+        "Staff Shift Started",
+        `**Host:** <@${host.id}>\n` +
+        `**Start Time:** <t:${Math.floor(now / 1000)}:F>\n` +
+        `**Scheduled End:** <t:${Math.floor(record.endsAt / 1000)}:F>\n` +
+        `**Duration:** 1 hour\n` +
+        `**Information:** ${details}\n\n` +
+        "The bot will automatically announce when this shift ends."
+      );
+    }
+
+    if (command === "military-operation") {
+      const host = interaction.user;
+      const id = interaction.guildId;
+      const channel = interaction.channel;
+
+      if (!channel || !channel.isTextBased()) {
+        return replyV2(
+          interaction,
+          "Unable to Start Operation",
+          "Use this command in a text channel.",
+          { ephemeral: true }
+        );
       }
+
+      if (operations.has(id)) {
+        return replyV2(
+          interaction,
+          "Operation Already Active",
+          "A military operation is already active in this server.",
+          { ephemeral: true }
+        );
+      }
+
+      const now = Date.now();
+      const name = interaction.options.getString("name", true);
+      const details =
+        interaction.options.getString("information") ||
+        "No additional information provided.";
+
+      const record = {
+        id,
+        type: "operation",
+        guildId: interaction.guildId,
+        channelId: channel.id,
+        hostId: host.id,
+        hostName: host.username,
+        details: `**Operation:** ${name}\n${details}`,
+        startedAt: now,
+        endsAt: now + ONE_HOUR
+      };
+
+      startTimedSession(record);
+
+      return replyV2(
+        interaction,
+        "Military Operation Started",
+        `**Operation:** ${name}\n` +
+        `**Host:** <@${host.id}>\n` +
+        `**Start Time:** <t:${Math.floor(now / 1000)}:F>\n` +
+        `**Scheduled End:** <t:${Math.floor(record.endsAt / 1000)}:F>\n` +
+        `**Duration:** 1 hour\n` +
+        `**Information:** ${details}\n\n` +
+        "The bot will automatically announce when this operation ends."
+      );
+    }
+
+    if (command === "training-session") {
+      const information =
+        interaction.options.getString("information", true);
+
+      return replyV2(
+        interaction,
+        "Training Session",
+        `**Host:** <@${interaction.user.id}>\n` +
+        `**Scheduled:** To be confirmed by the host\n\n` +
+        `**Training Information**\n${information}`
+      );
+    }
+
+    if (command === "warn") {
+      const user = interaction.options.getUser("user", true);
+      const reason = getReason(interaction);
+
+      recordModlog(
+        interaction.guildId,
+        user.id,
+        `Warning — ${reason}`,
+        interaction.user.id
+      );
+
+      return replyV2(
+        interaction,
+        "Warning Recorded",
+        `**Member:** <@${user.id}>\n` +
+        `**Moderator:** <@${interaction.user.id}>\n` +
+        `**Reason:** ${reason}`
+      );
+    }
+
+    if (command === "timeout") {
+      const user = interaction.options.getUser("user", true);
+      const minutes = interaction.options.getInteger("minutes", true);
+      const reason = getReason(interaction);
+
+      const member = await interaction.guild.members.fetch(user.id);
+
+      if (!member.moderatable) {
+        return replyV2(
+          interaction,
+          "Timeout Failed",
+          "I cannot timeout this member. Check my permissions and role position.",
+          { ephemeral: true }
+        );
+      }
+
+      await member.timeout(minutes * 60000, reason);
+
+      recordModlog(
+        interaction.guildId,
+        user.id,
+        `Timeout — ${minutes} minutes — ${reason}`,
+        interaction.user.id
+      );
+
+      return replyV2(
+        interaction,
+        "Member Timed Out",
+        `**Member:** <@${user.id}>\n` +
+        `**Duration:** ${minutes} minutes\n` +
+        `**Moderator:** <@${interaction.user.id}>\n` +
+        `**Reason:** ${reason}`
+      );
+    }
+
+    if (command === "kick") {
+      const user = interaction.options.getUser("user", true);
+      const reason = getReason(interaction);
+      const member = await interaction.guild.members.fetch(user.id);
+
+      if (!member.kickable) {
+        return replyV2(
+          interaction,
+          "Kick Failed",
+          "I cannot kick this member. Check my permissions and role position.",
+          { ephemeral: true }
+        );
+      }
+
+      await member.kick(reason);
+
+      recordModlog(
+        interaction.guildId,
+        user.id,
+        `Kick — ${reason}`,
+        interaction.user.id
+      );
+
+      return replyV2(
+        interaction,
+        "Member Kicked",
+        `**Member:** ${user.username}\n` +
+        `**Moderator:** <@${interaction.user.id}>\n` +
+        `**Reason:** ${reason}`
+      );
+    }
+
+    if (command === "ban") {
+      const user = interaction.options.getUser("user", true);
+      const reason = getReason(interaction);
+
+      await interaction.guild.members.ban(user.id, { reason });
+
+      recordModlog(
+        interaction.guildId,
+        user.id,
+        `Ban — ${reason}`,
+        interaction.user.id
+      );
+
+      return replyV2(
+        interaction,
+        "Member Banned",
+        `**User:** ${user.username}\n` +
+        `**Moderator:** <@${interaction.user.id}>\n` +
+        `**Reason:** ${reason}`
+      );
+    }
+
+    if (command === "purge") {
+      const amount = interaction.options.getInteger("amount", true);
+      const channel = interaction.channel;
+
+      if (!channel || !channel.isTextBased() ||
+          typeof channel.bulkDelete !== "function") {
+        return replyV2(
+          interaction,
+          "Purge Failed",
+          "This command must be used in a supported text channel.",
+          { ephemeral: true }
+        );
+      }
+
+      const deleted = await channel.bulkDelete(amount, true);
+
+      return replyV2(
+        interaction,
+        "Messages Purged",
+        `**Requested:** ${amount}\n` +
+        `**Deleted:** ${deleted.size}\n\n` +
+        "Messages older than 14 days cannot be bulk-deleted."
+      );
+    }
+
+    if (command === "modlogs") {
+      const user = interaction.options.getUser("user", true);
+      const entries = modlogs.get(
+        `${interaction.guildId}:${user.id}`
+      ) || [];
+
+      const description = entries.length
+        ? entries.slice(-10).reverse().map((entry, index) =>
+            `**${index + 1}.** ${entry.action}\n` +
+            `Moderator: <@${entry.moderator}>\n` +
+            `Date: <t:${Math.floor(entry.timestamp / 1000)}:F>`
+          ).join("\n\n")
+        : "No moderation actions have been recorded for this user.";
+
+      return replyV2(
+        interaction,
+        `Moderation Logs — ${user.username}`,
+        description,
+        { ephemeral: true }
+      );
+    }
+
+    if (command === "announce") {
+      const message =
+        interaction.options.getString("message", true);
+
+      return replyV2(
+        interaction,
+        "Server Announcement",
+        `**Announcement by:** <@${interaction.user.id}>\n\n${message}`
+      );
     }
   } catch (error) {
-    console.error(
-      `Command /${interaction.commandName} failed:`,
-      error
-    );
+    console.error("Command failed:", error);
 
-    const response = {
-      content: "The command failed. Check the bot console and permissions.",
-      flags: MessageFlags.Ephemeral
-    };
-
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(response).catch(() => {});
-    } else {
-      await interaction.reply(response).catch(() => {});
-    }
+    return replyV2(
+      interaction,
+      "Command Error",
+      "The command could not be completed. Check the bot console for the detailed error.",
+      { ephemeral: true }
+    ).catch(console.error);
   }
 });
 
-client.login(TOKEN).catch(error => {
-  console.error("Discord login failed:", error);
-  process.exit(1);
-});
+if (!TOKEN) {
+  console.error("DISCORD_TOKEN is missing.");
+} else {
+  client.login(TOKEN).catch(error => {
+    console.error("Bot login failed:", error);
+  });
+}
