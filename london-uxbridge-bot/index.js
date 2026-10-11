@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const fs = require("node:fs");
@@ -24,7 +23,6 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  OverwriteType,
 } = require("discord.js");
 
 // ==================================================
@@ -87,33 +85,63 @@ const client = new Client({
   ],
 });
 
-// Stores unfinished setup sessions until Confirm Setup is clicked.
 const setupSessions = new Map();
+
+// ==================================================
+// TICKET TYPES
+// ==================================================
 
 const TICKET_TYPES = {
   report: {
     label: "Report a User",
-    description: "Report a user or incident.",
-    button: "Open Report",
-    intro: "Use this ticket to report a user or incident. Explain what happened and include any relevant evidence.",
+    slug: "report-a-user",
+    emoji: "🚩",
+    button: "Report a User",
+    description:
+      "Report a member or an incident to the moderation team.",
+    intro:
+      "Use this ticket to report a user or incident. Explain what happened, include relevant dates, and attach any evidence you have.",
+    guidance:
+      "Please provide the username of the person involved, what happened, when it happened, and any screenshots or other evidence.",
   },
+
   appeal: {
     label: "Appeals",
-    description: "Submit an appeal for review.",
-    button: "Submit Appeal",
-    intro: "Use this ticket to submit an appeal. Explain the decision you are appealing and why it should be reviewed.",
+    slug: "appeal",
+    emoji: "⚖️",
+    button: "Submit an Appeal",
+    description:
+      "Request a review of a moderation action or community decision.",
+    intro:
+      "Use this ticket to submit an appeal. Explain the action you are appealing and why you believe it should be reviewed.",
+    guidance:
+      "Please include the action you are appealing, when it happened, and a clear explanation of your appeal.",
   },
+
   staff: {
     label: "Staff Report",
-    description: "Report a member of staff.",
-    button: "Report Staff",
-    intro: "Use this ticket to report a staff member. Provide details and any relevant evidence.",
+    slug: "staff-report",
+    emoji: "🛡️",
+    button: "Report a Staff Member",
+    description:
+      "Raise a concern about a member of the staff team privately.",
+    intro:
+      "Use this ticket to report a staff member. Please remain respectful and provide relevant details and evidence.",
+    guidance:
+      "Please name the staff member involved, describe the incident, and include any relevant evidence.",
   },
+
   enquiries: {
     label: "Enquiries",
-    description: "Ask the support team a question.",
-    button: "Open Enquiry",
-    intro: "Use this ticket for general questions and enquiries. Explain how the support team can help.",
+    slug: "enquiries",
+    emoji: "💬",
+    button: "Open an Enquiry",
+    description:
+      "Ask the team a question or request help with the community.",
+    intro:
+      "Use this ticket for general questions and enquiries. Explain what you need help with and the team will get back to you.",
+    guidance:
+      "Please describe your question or enquiry in as much detail as you can.",
   },
 };
 
@@ -124,15 +152,24 @@ const TICKET_TYPES = {
 function container(...lines) {
   const result = new ContainerBuilder();
 
-  for (let i = 0; i < lines.length; i++) {
-    if (i > 0) {
-      result.addSeparatorComponents(new SeparatorBuilder());
-    }
+  lines
+    .filter(
+      line =>
+        line !== null &&
+        line !== undefined &&
+        String(line).length
+    )
+    .forEach((line, index) => {
+      if (index > 0) {
+        result.addSeparatorComponents(
+          new SeparatorBuilder()
+        );
+      }
 
-    result.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(lines[i])
-    );
-  }
+      result.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(String(line))
+      );
+    });
 
   return result;
 }
@@ -192,15 +229,29 @@ function getConfig(guildId) {
   return data.ticketConfigs[guildId];
 }
 
-function makeButton(id, label, style = ButtonStyle.Secondary) {
+function makeButton(
+  id,
+  label,
+  style = ButtonStyle.Secondary
+) {
   return new ButtonBuilder()
     .setCustomId(id)
     .setLabel(label)
     .setStyle(style);
 }
 
+function slugify(value) {
+  return String(value || "member")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 70) || "member";
+}
+
 async function sendTicketLog(guild, ticket, text) {
-  const config = getConfig(ticket.guildId);
+  const config = getConfig(ticket.guildId)?.[ticket.type];
+
   if (!config?.logsChannelId) return;
 
   const channel = await guild.channels
@@ -211,10 +262,13 @@ async function sendTicketLog(guild, ticket, text) {
 
   await channel.send(
     v2(
-      "## London, Uxbridge | Ticket Log",
+      "## 🧾 London, Uxbridge | Ticket Log",
       text,
-      `**Ticket number:** ${ticket.ticketNumber}`,
-      `**Ticket type:** ${TICKET_TYPES[ticket.type]?.label || ticket.type}`
+      `**Ticket number:** #${ticket.ticketNumber}`,
+      `**Ticket type:** ${
+        TICKET_TYPES[ticket.type]?.label || ticket.type
+      }`,
+      `**Ticket channel:** <#${ticket.channelId}>`
     )
   ).catch(console.error);
 }
@@ -231,12 +285,16 @@ const commands = [
   new SlashCommandBuilder()
     .setName("information")
     .setDescription("Post the community information panel.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.Administrator
+    ),
 
   new SlashCommandBuilder()
     .setName("ticket")
-    .setDescription("Set up a ticket panel using the interactive setup.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    .setDescription("Set up a Components V2 ticket panel.")
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.Administrator
+    ),
 
   new SlashCommandBuilder()
     .setName("help")
@@ -255,10 +313,12 @@ const commands = [
     .setName("staff-shift")
     .setDescription("Manage staff shifts.")
     .addSubcommand(s =>
-      s.setName("start").setDescription("Start your staff shift.")
+      s.setName("start")
+        .setDescription("Start your staff shift.")
     )
     .addSubcommand(s =>
-      s.setName("end").setDescription("End your staff shift.")
+      s.setName("end")
+        .setDescription("End your staff shift.")
     ),
 
   new SlashCommandBuilder()
@@ -274,10 +334,12 @@ const commands = [
         )
     )
     .addSubcommand(s =>
-      s.setName("end").setDescription("End the current operation.")
+      s.setName("end")
+        .setDescription("End the current operation.")
     )
     .addSubcommand(s =>
-      s.setName("status").setDescription("View operation status.")
+      s.setName("status")
+        .setDescription("View operation status.")
     ),
 
   new SlashCommandBuilder()
@@ -292,20 +354,30 @@ const commands = [
   new SlashCommandBuilder()
     .setName("warn")
     .setDescription("Warn a member.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ModerateMembers
+    )
     .addUserOption(o =>
-      o.setName("member").setDescription("Member to warn.").setRequired(true)
+      o.setName("member")
+        .setDescription("Member to warn.")
+        .setRequired(true)
     )
     .addStringOption(o =>
-      o.setName("reason").setDescription("Reason.").setRequired(true)
+      o.setName("reason")
+        .setDescription("Reason.")
+        .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("timeout")
     .setDescription("Timeout a member.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ModerateMembers
+    )
     .addUserOption(o =>
-      o.setName("member").setDescription("Member to timeout.").setRequired(true)
+      o.setName("member")
+        .setDescription("Member to timeout.")
+        .setRequired(true)
     )
     .addIntegerOption(o =>
       o.setName("minutes")
@@ -315,35 +387,51 @@ const commands = [
         .setRequired(true)
     )
     .addStringOption(o =>
-      o.setName("reason").setDescription("Reason.").setRequired(false)
+      o.setName("reason")
+        .setDescription("Reason.")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("kick")
     .setDescription("Kick a member.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.KickMembers
+    )
     .addUserOption(o =>
-      o.setName("member").setDescription("Member to kick.").setRequired(true)
+      o.setName("member")
+        .setDescription("Member to kick.")
+        .setRequired(true)
     )
     .addStringOption(o =>
-      o.setName("reason").setDescription("Reason.").setRequired(false)
+      o.setName("reason")
+        .setDescription("Reason.")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("ban")
     .setDescription("Ban a member.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.BanMembers
+    )
     .addUserOption(o =>
-      o.setName("member").setDescription("Member to ban.").setRequired(true)
+      o.setName("member")
+        .setDescription("Member to ban.")
+        .setRequired(true)
     )
     .addStringOption(o =>
-      o.setName("reason").setDescription("Reason.").setRequired(false)
+      o.setName("reason")
+        .setDescription("Reason.")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("purge")
     .setDescription("Delete messages in this channel.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageMessages
+    )
     .addIntegerOption(o =>
       o.setName("amount")
         .setDescription("Number of messages to delete.")
@@ -355,15 +443,21 @@ const commands = [
   new SlashCommandBuilder()
     .setName("modlogs")
     .setDescription("View a member's warning records.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ModerateMembers
+    )
     .addUserOption(o =>
-      o.setName("member").setDescription("Member to inspect.").setRequired(true)
+      o.setName("member")
+        .setDescription("Member to inspect.")
+        .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("announce")
     .setDescription("Post an announcement.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageGuild
+    )
     .addChannelOption(o =>
       o.setName("channel")
         .setDescription("Announcement channel.")
@@ -371,7 +465,9 @@ const commands = [
         .setRequired(true)
     )
     .addStringOption(o =>
-      o.setName("message").setDescription("Announcement text.").setRequired(true)
+      o.setName("message")
+        .setDescription("Announcement text.")
+        .setRequired(true)
     ),
 ].map(command => command.toJSON());
 
@@ -404,39 +500,46 @@ client.once("ready", async () => {
 
 client.on("interactionCreate", async interaction => {
   try {
-    // ==============================================
+    // ==================================================
     // SLASH COMMANDS
-    // ==============================================
+    // ==================================================
 
     if (interaction.isChatInputCommand()) {
       if (!interaction.guild) {
-        return privateReply(interaction, "Please use this command inside a server.");
+        return privateReply(
+          interaction,
+          "Please use this command inside a server."
+        );
       }
 
       const guild = interaction.guild;
       const user = interaction.user;
-      const member = interaction.member;
       const name = interaction.commandName;
 
       if (name === "ping") {
-        return privateReply(interaction, "Pong! The bot is online.");
+        return privateReply(
+          interaction,
+          "## 🟢 Pong!",
+          "London, Uxbridge is online and responding."
+        );
       }
 
       if (name === "help") {
         return privateReply(
           interaction,
-          "## London, Uxbridge Commands",
-          "**Tickets:** `/ticket`",
-          "**Information:** `/information`, `/help`, `/ping`, `/userinfo`",
-          "**Staff:** `/staff-shift`, `/training-session`",
-          "**Operations:** `/military-operation`",
-          "**Moderation:** `/warn`, `/timeout`, `/kick`, `/ban`, `/purge`, `/modlogs`, `/announce`"
+          "## London, Uxbridge | Command Centre",
+          "**🎫 Tickets:** `/ticket`",
+          "**ℹ️ Community:** `/information`, `/help`, `/ping`, `/userinfo`",
+          "**🧑‍💼 Staff:** `/staff-shift`, `/training-session`",
+          "**🚨 Operations:** `/military-operation`",
+          "**🛡️ Moderation:** `/warn`, `/timeout`, `/kick`, `/ban`, `/purge`, `/modlogs`, `/announce`",
+          `[Support server](${SUPPORT_URL})`
         );
       }
 
-      // --------------------------------------------
-      // INTERACTIVE TICKET SETUP
-      // --------------------------------------------
+      // ==================================================
+      // TICKET SETUP
+      // ==================================================
 
       if (name === "ticket") {
         if (!isAdmin(interaction)) {
@@ -446,138 +549,190 @@ client.on("interactionCreate", async interaction => {
           );
         }
 
-        const sessionKey = `${guild.id}:${user.id}`;
+        const key = `${guild.id}:${user.id}`;
 
-        setupSessions.set(sessionKey, {
+        setupSessions.set(key, {
           guildId: guild.id,
           userId: user.id,
           type: null,
           panelChannelId: null,
+          categoryId: null,
           logsChannelId: null,
           createdAt: Date.now(),
         });
 
         const typeMenu = new StringSelectMenuBuilder()
           .setCustomId("ticket_setup_type")
-          .setPlaceholder("1. Choose a ticket panel")
+          .setPlaceholder("1 · Choose a ticket panel type")
           .addOptions(
-            {
-              label: "Report a User",
-              value: "report",
-              description: "Configure the user report panel.",
-            },
-            {
-              label: "Appeals",
-              value: "appeal",
-              description: "Configure the appeal panel.",
-            },
-            {
-              label: "Staff Report",
-              value: "staff",
-              description: "Configure the staff report panel.",
-            },
-            {
-              label: "Enquiries",
-              value: "enquiries",
-              description: "Configure the enquiries panel.",
-            }
+            ...Object.entries(TICKET_TYPES).map(
+              ([value, type]) => ({
+                label: type.label,
+                value,
+                description: type.description.slice(0, 100),
+                emoji: type.emoji,
+              })
+            )
           );
 
-        const panelChannelMenu = new ChannelSelectMenuBuilder()
+        const panelMenu = new ChannelSelectMenuBuilder()
           .setCustomId("ticket_setup_panel_channel")
-          .setPlaceholder("2. Choose where the panel will be posted")
+          .setPlaceholder("2 · Choose the panel posting channel")
           .setChannelTypes(ChannelType.GuildText)
           .setMinValues(1)
           .setMaxValues(1);
 
-        const logsChannelMenu = new ChannelSelectMenuBuilder()
+        const categoryMenu = new ChannelSelectMenuBuilder()
+          .setCustomId("ticket_setup_category")
+          .setPlaceholder("3 · Choose the ticket category")
+          .setChannelTypes(ChannelType.GuildCategory)
+          .setMinValues(1)
+          .setMaxValues(1);
+
+        const logsMenu = new ChannelSelectMenuBuilder()
           .setCustomId("ticket_setup_logs_channel")
-          .setPlaceholder("3. Choose the ticket logs channel")
+          .setPlaceholder("4 · Choose the ticket logs channel")
           .setChannelTypes(ChannelType.GuildText)
           .setMinValues(1)
           .setMaxValues(1);
-
-        const confirmButton = makeButton(
-          "ticket_setup_confirm",
-          "Confirm Setup",
-          ButtonStyle.Success
-        );
-
-        const cancelButton = makeButton(
-          "ticket_setup_cancel",
-          "Cancel",
-          ButtonStyle.Danger
-        );
 
         return interaction.reply({
           ...privateV2(
-            "## London, Uxbridge | Ticket Setup",
-            "Configure your ticket system below. Select a ticket type, choose the channel where its panel should appear, and choose a logs channel.",
-            "**Step 1 — Ticket panel**\nChoose Report a User, Appeals, Staff Report, or Enquiries.",
-            "**Step 2 — Panel channel**\nChoose the text channel where members will see the panel.",
-            "**Step 3 — Logs channel**\nChoose where ticket actions will be logged.",
-            "**Step 4 — Confirm**\nPress Confirm Setup to save your choices and publish the panel."
+            "## 🎫 London, Uxbridge | Ticket Setup",
+            "Configure one ticket panel at a time. Nothing is published until you press **Confirm Setup**.",
+            "**1 — Panel type** · Choose Report a User, Appeals, Staff Report or Enquiries.",
+            "**2 — Panel channel** · Where members will see the panel.",
+            "**3 — Ticket category** · Where new private ticket channels will be created.",
+            "**4 — Logs channel** · Where ticket actions will be recorded.",
+            "**5 — Confirm** · Check your choices, then publish the panel. Run `/ticket` again to configure another panel type."
           ),
           components: [
             new ActionRowBuilder().addComponents(typeMenu),
-            new ActionRowBuilder().addComponents(panelChannelMenu),
-            new ActionRowBuilder().addComponents(logsChannelMenu),
-            new ActionRowBuilder().addComponents(confirmButton, cancelButton),
+            new ActionRowBuilder().addComponents(panelMenu),
+            new ActionRowBuilder().addComponents(categoryMenu),
+            new ActionRowBuilder().addComponents(logsMenu),
+            new ActionRowBuilder().addComponents(
+              makeButton(
+                "ticket_setup_confirm",
+                "Confirm Setup",
+                ButtonStyle.Success
+              ),
+              makeButton(
+                "ticket_setup_cancel",
+                "Cancel",
+                ButtonStyle.Danger
+              )
+            ),
           ],
         });
       }
 
+      // ==================================================
+      // INFORMATION PANEL
+      // ==================================================
+
       if (name === "information") {
         if (!isAdmin(interaction)) {
-          return privateReply(interaction, "Only administrators can post the information panel.");
+          return privateReply(
+            interaction,
+            "Only administrators can post the information panel."
+          );
         }
 
         const menu = new StringSelectMenuBuilder()
           .setCustomId("community_information")
           .setPlaceholder("Choose an information section")
           .addOptions(
-            { label: "Information", value: "information" },
-            { label: "Server Rules", value: "server_rules" },
-            { label: "Game Rules", value: "game_rules" },
-            { label: "Departments", value: "departments" },
-            { label: "Disclaimer", value: "disclaimer" }
+            {
+              label: "Information",
+              value: "information",
+              emoji: "ℹ️",
+            },
+            {
+              label: "Server Rules",
+              value: "server_rules",
+              emoji: "📜",
+            },
+            {
+              label: "Game Rules",
+              value: "game_rules",
+              emoji: "🎮",
+            },
+            {
+              label: "Departments",
+              value: "departments",
+              emoji: "🏢",
+            },
+            {
+              label: "Disclaimer",
+              value: "disclaimer",
+              emoji: "⚠️",
+            }
           );
 
         await interaction.channel.send({
           ...v2(
-            "## London, Uxbridge",
-            "Welcome to London, Uxbridge, a British Roblox roleplay community. Use the menu below to view community information and rules."
+            "## 🇬🇧 London, Uxbridge",
+            "Welcome to London, Uxbridge, a British Roblox roleplay community.",
+            "Choose a section from the menu below to view our information, rules and departments."
           ),
-          components: [new ActionRowBuilder().addComponents(menu)],
+          components: [
+            new ActionRowBuilder().addComponents(menu),
+          ],
         });
-
-        return privateReply(interaction, "The information panel has been posted.");
-      }
-
-      if (name === "userinfo") {
-        const target = interaction.options.getUser("member") || user;
-        const targetMember = await guild.members.fetch(target.id).catch(() => null);
 
         return privateReply(
           interaction,
-          "## Member Information",
-          `**Username:** ${target.username}`,
-          `**User ID:** ${target.id}`,
-          `**Account created:** <t:${Math.floor(target.createdTimestamp / 1000)}:F>`,
-          `**Joined server:** ${targetMember?.joinedTimestamp ? `<t:${Math.floor(targetMember.joinedTimestamp / 1000)}:F>` : "Unknown"}`
+          "The information panel has been posted."
         );
       }
 
+      // ==================================================
+      // USER INFORMATION
+      // ==================================================
+
+      if (name === "userinfo") {
+        const target =
+          interaction.options.getUser("member") || user;
+
+        const targetMember = await guild.members
+          .fetch(target.id)
+          .catch(() => null);
+
+        return privateReply(
+          interaction,
+          "## 👤 Member Information",
+          `**Username:** ${target.username}`,
+          `**User ID:** ${target.id}`,
+          `**Account created:** <t:${Math.floor(target.createdTimestamp / 1000)}:F>`,
+          `**Joined server:** ${
+            targetMember?.joinedTimestamp
+              ? `<t:${Math.floor(targetMember.joinedTimestamp / 1000)}:F>`
+              : "Unknown"
+          }`
+        );
+      }
+
+      // ==================================================
+      // STAFF SHIFTS
+      // ==================================================
+
       if (name === "staff-shift") {
         if (!isStaff(interaction)) {
-          return privateReply(interaction, "You do not have permission to manage staff shifts.");
+          return privateReply(
+            interaction,
+            "You do not have permission to manage staff shifts."
+          );
         }
 
         const sub = interaction.options.getSubcommand();
 
         if (sub === "start") {
           if (data.shifts[guild.id]?.userId === user.id) {
-            return privateReply(interaction, "You already have an active shift.");
+            return privateReply(
+              interaction,
+              "You already have an active shift."
+            );
           }
 
           data.shifts[guild.id] = {
@@ -589,16 +744,20 @@ client.on("interactionCreate", async interaction => {
 
           return privateReply(
             interaction,
-            "## Staff Shift Started",
+            "## 🟢 Staff Shift Started",
             `**Staff member:** ${user}`,
-            `**Started:** <t:${Math.floor(Date.now() / 1000)}:F>`
+            `**Started:** <t:${Math.floor(Date.now() / 1000)}:F>`,
+            "Your shift will automatically expire after one hour."
           );
         }
 
         const shift = data.shifts[guild.id];
 
         if (!shift || shift.userId !== user.id) {
-          return privateReply(interaction, "You do not have an active shift.");
+          return privateReply(
+            interaction,
+            "You do not have an active shift."
+          );
         }
 
         delete data.shifts[guild.id];
@@ -606,25 +765,38 @@ client.on("interactionCreate", async interaction => {
 
         return privateReply(
           interaction,
-          "## Staff Shift Ended",
+          "## 🛑 Staff Shift Ended",
           `**Staff member:** ${user}`,
-          `**Duration:** ${Math.floor((Date.now() - shift.startedAt) / 60000)} minutes`
+          `**Duration:** ${Math.floor(
+            (Date.now() - shift.startedAt) / 60000
+          )} minutes`
         );
       }
 
+      // ==================================================
+      // MILITARY OPERATIONS
+      // ==================================================
+
       if (name === "military-operation") {
         if (!isStaff(interaction)) {
-          return privateReply(interaction, "You do not have permission to manage operations.");
+          return privateReply(
+            interaction,
+            "You do not have permission to manage operations."
+          );
         }
 
         const sub = interaction.options.getSubcommand();
 
         if (sub === "start") {
           if (data.operations[guild.id]) {
-            return privateReply(interaction, "An operation is already active.");
+            return privateReply(
+              interaction,
+              "An operation is already active."
+            );
           }
 
-          const operationName = interaction.options.getString("name");
+          const operationName =
+            interaction.options.getString("name");
 
           data.operations[guild.id] = {
             name: operationName,
@@ -636,10 +808,11 @@ client.on("interactionCreate", async interaction => {
 
           return privateReply(
             interaction,
-            "## Operation Started",
+            "## 🚨 Operation Started",
             `**Operation:** ${operationName}`,
             `**Started by:** ${user}`,
-            `**Time:** <t:${Math.floor(Date.now() / 1000)}:F>`
+            `**Time:** <t:${Math.floor(Date.now() / 1000)}:F>`,
+            "This operation will automatically expire after one hour."
           );
         }
 
@@ -647,7 +820,10 @@ client.on("interactionCreate", async interaction => {
           const operation = data.operations[guild.id];
 
           if (!operation) {
-            return privateReply(interaction, "There is no active operation.");
+            return privateReply(
+              interaction,
+              "There is no active operation."
+            );
           }
 
           delete data.operations[guild.id];
@@ -655,7 +831,7 @@ client.on("interactionCreate", async interaction => {
 
           return privateReply(
             interaction,
-            "## Operation Ended",
+            "## ✅ Operation Ended",
             `**Operation:** ${operation.name}`,
             `**Ended by:** ${user}`
           );
@@ -664,41 +840,63 @@ client.on("interactionCreate", async interaction => {
         const operation = data.operations[guild.id];
 
         if (!operation) {
-          return privateReply(interaction, "There is no active operation.");
+          return privateReply(
+            interaction,
+            "There is no active operation."
+          );
         }
 
         return privateReply(
           interaction,
-          "## Operation Status",
+          "## 🚨 Operation Status",
           `**Operation:** ${operation.name}`,
           `**Started by:** <@${operation.startedBy}>`,
           `**Started:** <t:${Math.floor(operation.startedAt / 1000)}:R>`
         );
       }
 
+      // ==================================================
+      // TRAINING SESSION
+      // ==================================================
+
       if (name === "training-session") {
         if (!isStaff(interaction)) {
-          return privateReply(interaction, "You do not have permission to announce training.");
+          return privateReply(
+            interaction,
+            "You do not have permission to announce training."
+          );
         }
 
-        const details = interaction.options.getString("details");
+        const details =
+          interaction.options.getString("details");
 
         await interaction.channel.send(
           v2(
-            "## Training Session",
+            "## 🎓 Training Session",
             `**Organiser:** ${user}`,
             `**Details:** ${details}`
           )
         );
 
-        return privateReply(interaction, "The training announcement has been posted.");
+        return privateReply(
+          interaction,
+          "The training announcement has been posted."
+        );
       }
 
+      // ==================================================
+      // WARN
+      // ==================================================
+
       if (name === "warn") {
-        const target = interaction.options.getUser("member");
-        const reason = interaction.options.getString("reason");
+        const target =
+          interaction.options.getUser("member");
+
+        const reason =
+          interaction.options.getString("reason");
 
         data.warnings[target.id] ??= [];
+
         data.warnings[target.id].push({
           guildId: guild.id,
           moderatorId: user.id,
@@ -710,7 +908,7 @@ client.on("interactionCreate", async interaction => {
 
         await target.send(
           privateV2(
-            "## Warning Received",
+            "## ⚠️ Warning Received",
             `**Server:** ${guild.name}`,
             `**Reason:** ${reason}`
           )
@@ -718,97 +916,153 @@ client.on("interactionCreate", async interaction => {
 
         return privateReply(
           interaction,
-          "## Warning Recorded",
+          "## ⚠️ Warning Recorded",
           `**Member:** ${target}`,
           `**Reason:** ${reason}`
         );
       }
 
+      // ==================================================
+      // TIMEOUT
+      // ==================================================
+
       if (name === "timeout") {
-        const target = interaction.options.getMember("member");
-        const minutes = interaction.options.getInteger("minutes");
-        const reason = interaction.options.getString("reason") || "No reason provided";
+        const target =
+          interaction.options.getMember("member");
+
+        const minutes =
+          interaction.options.getInteger("minutes");
+
+        const reason =
+          interaction.options.getString("reason") ||
+          "No reason provided";
 
         if (!target?.moderatable) {
-          return privateReply(interaction, "I cannot timeout that member. Check my permissions and role position.");
+          return privateReply(
+            interaction,
+            "I cannot timeout that member. Check my permissions and role position."
+          );
         }
 
         await target.timeout(minutes * 60000, reason);
 
         return privateReply(
           interaction,
-          "## Member Timed Out",
+          "## ⏳ Member Timed Out",
           `**Member:** ${target.user}`,
           `**Duration:** ${minutes} minutes`,
           `**Reason:** ${reason}`
         );
       }
 
+      // ==================================================
+      // KICK
+      // ==================================================
+
       if (name === "kick") {
-        const target = interaction.options.getMember("member");
-        const reason = interaction.options.getString("reason") || "No reason provided";
+        const target =
+          interaction.options.getMember("member");
+
+        const reason =
+          interaction.options.getString("reason") ||
+          "No reason provided";
 
         if (!target?.kickable) {
-          return privateReply(interaction, "I cannot kick that member. Check my permissions and role position.");
+          return privateReply(
+            interaction,
+            "I cannot kick that member. Check my permissions and role position."
+          );
         }
 
         await target.kick(reason);
 
         return privateReply(
           interaction,
-          "## Member Kicked",
+          "## 👢 Member Kicked",
           `**Member:** ${target.user.tag}`,
           `**Reason:** ${reason}`
         );
       }
 
+      // ==================================================
+      // BAN
+      // ==================================================
+
       if (name === "ban") {
-        const target = interaction.options.getUser("member");
-        const reason = interaction.options.getString("reason") || "No reason provided";
-        const targetMember = await guild.members.fetch(target.id).catch(() => null);
+        const target =
+          interaction.options.getUser("member");
+
+        const reason =
+          interaction.options.getString("reason") ||
+          "No reason provided";
+
+        const targetMember = await guild.members
+          .fetch(target.id)
+          .catch(() => null);
 
         if (targetMember && !targetMember.bannable) {
-          return privateReply(interaction, "I cannot ban that member. Check my permissions and role position.");
+          return privateReply(
+            interaction,
+            "I cannot ban that member. Check my permissions and role position."
+          );
         }
 
         await guild.members.ban(target.id, { reason });
 
         return privateReply(
           interaction,
-          "## Member Banned",
+          "## 🔨 Member Banned",
           `**Member:** ${target.tag}`,
           `**Reason:** ${reason}`
         );
       }
 
+      // ==================================================
+      // PURGE
+      // ==================================================
+
       if (name === "purge") {
-        const amount = interaction.options.getInteger("amount");
+        const amount =
+          interaction.options.getInteger("amount");
 
         if (!interaction.channel?.bulkDelete) {
-          return privateReply(interaction, "This command cannot be used here.");
+          return privateReply(
+            interaction,
+            "This command cannot be used here."
+          );
         }
 
-        const messages = await interaction.channel.bulkDelete(amount, true);
+        const messages =
+          await interaction.channel.bulkDelete(amount, true);
 
         return privateReply(
           interaction,
-          "## Messages Deleted",
+          "## 🧹 Messages Deleted",
           `Deleted **${messages.size}** messages. Messages older than 14 days cannot be bulk deleted.`
         );
       }
 
+      // ==================================================
+      // MODERATION LOGS
+      // ==================================================
+
       if (name === "modlogs") {
-        const target = interaction.options.getUser("member");
+        const target =
+          interaction.options.getUser("member");
+
         const records = (data.warnings[target.id] || [])
           .filter(record => record.guildId === guild.id);
 
         if (!records.length) {
-          return privateReply(interaction, "No warnings are recorded for this member.");
+          return privateReply(
+            interaction,
+            "No warnings are recorded for this member."
+          );
         }
 
         return privateReply(
           interaction,
-          "## Moderation Records",
+          "## 📋 Moderation Records",
           `**Member:** ${target}`,
           records.slice(-10).map((record, i) =>
             `**${i + 1}.** ${record.reason}\nModerator: <@${record.moderatorId}> • <t:${Math.floor(record.timestamp / 1000)}:R>`
@@ -816,126 +1070,188 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
+      // ==================================================
+      // ANNOUNCEMENTS
+      // ==================================================
+
       if (name === "announce") {
-        const channel = interaction.options.getChannel("channel");
-        const message = interaction.options.getString("message");
+        const channel =
+          interaction.options.getChannel("channel");
+
+        const message =
+          interaction.options.getString("message");
 
         await channel.send(
           v2(
-            "## London, Uxbridge Announcement",
+            "## 📢 London, Uxbridge Announcement",
             message,
             `**Posted by:** ${user}`
           )
         );
 
-        return privateReply(interaction, "The announcement has been posted.");
+        return privateReply(
+          interaction,
+          "The announcement has been posted."
+        );
       }
     }
 
-    // ==============================================
-    // TICKET SETUP DROPDOWNS
-    // ==============================================
+    // ==================================================
+    // TICKET SETUP: TYPE DROPDOWN
+    // ==================================================
 
     if (
       interaction.isStringSelectMenu() &&
       interaction.customId === "ticket_setup_type"
     ) {
       if (!isAdmin(interaction)) {
-        return privateReply(interaction, "Only administrators can configure ticket panels.");
+        return privateReply(
+          interaction,
+          "Only administrators can configure ticket panels."
+        );
       }
 
-      const key = `${interaction.guildId}:${interaction.user.id}`;
-      const session = setupSessions.get(key);
+      const session = setupSessions.get(
+        `${interaction.guildId}:${interaction.user.id}`
+      );
 
       if (!session) {
-        return privateReply(interaction, "Your setup session expired. Run `/ticket` again.");
+        return privateReply(
+          interaction,
+          "Your setup session expired. Run `/ticket` again."
+        );
       }
 
       session.type = interaction.values[0];
 
       return privateReply(
         interaction,
-        `Ticket type selected: **${TICKET_TYPES[session.type].label}**.`,
-        "Continue by choosing the panel channel and logs channel, then press Confirm Setup."
+        `Selected panel type: **${TICKET_TYPES[session.type].label}**.`,
+        "Continue with the panel channel, ticket category and logs channel."
       );
     }
+
+    // ==================================================
+    // TICKET SETUP: CHANNEL DROPDOWNS
+    // ==================================================
 
     if (
       interaction.isChannelSelectMenu() &&
-      (
-        interaction.customId === "ticket_setup_panel_channel" ||
-        interaction.customId === "ticket_setup_logs_channel"
-      )
+      [
+        "ticket_setup_panel_channel",
+        "ticket_setup_category",
+        "ticket_setup_logs_channel",
+      ].includes(interaction.customId)
     ) {
       if (!isAdmin(interaction)) {
-        return privateReply(interaction, "Only administrators can configure ticket panels.");
-      }
-
-      const key = `${interaction.guildId}:${interaction.user.id}`;
-      const session = setupSessions.get(key);
-
-      if (!session) {
-        return privateReply(interaction, "Your setup session expired. Run `/ticket` again.");
-      }
-
-      if (interaction.customId === "ticket_setup_panel_channel") {
-        session.panelChannelId = interaction.values[0];
-
         return privateReply(
           interaction,
-          `Panel channel selected: <#${session.panelChannelId}>.`
+          "Only administrators can configure ticket panels."
         );
       }
 
-      session.logsChannelId = interaction.values[0];
+      const session = setupSessions.get(
+        `${interaction.guildId}:${interaction.user.id}`
+      );
+
+      if (!session) {
+        return privateReply(
+          interaction,
+          "Your setup session expired. Run `/ticket` again."
+        );
+      }
+
+      if (
+        interaction.customId ===
+        "ticket_setup_panel_channel"
+      ) {
+        session.panelChannelId = interaction.values[0];
+      }
+
+      if (
+        interaction.customId === "ticket_setup_category"
+      ) {
+        session.categoryId = interaction.values[0];
+      }
+
+      if (
+        interaction.customId ===
+        "ticket_setup_logs_channel"
+      ) {
+        session.logsChannelId = interaction.values[0];
+      }
+
+      const labels = {
+        ticket_setup_panel_channel: "Panel channel",
+        ticket_setup_category: "Ticket category",
+        ticket_setup_logs_channel: "Logs channel",
+      };
 
       return privateReply(
         interaction,
-        `Logs channel selected: <#${session.logsChannelId}>.`
+        `**${labels[interaction.customId]} selected.** <#${interaction.values[0]}>`
       );
     }
 
-    // ==============================================
-    // CONFIRM OR CANCEL SETUP
-    // ==============================================
+    // ==================================================
+    // CONFIRM / CANCEL TICKET SETUP
+    // ==================================================
 
     if (
       interaction.isButton() &&
-      (
-        interaction.customId === "ticket_setup_confirm" ||
-        interaction.customId === "ticket_setup_cancel"
-      )
+      [
+        "ticket_setup_confirm",
+        "ticket_setup_cancel",
+      ].includes(interaction.customId)
     ) {
       if (!isAdmin(interaction)) {
-        return privateReply(interaction, "Only administrators can configure ticket panels.");
+        return privateReply(
+          interaction,
+          "Only administrators can configure ticket panels."
+        );
       }
 
-      const key = `${interaction.guildId}:${interaction.user.id}`;
+      const key =
+        `${interaction.guildId}:${interaction.user.id}`;
+
       const session = setupSessions.get(key);
 
       if (!session) {
-        return privateReply(interaction, "Your setup session expired. Run `/ticket` again.");
+        return privateReply(
+          interaction,
+          "Your setup session expired. Run `/ticket` again."
+        );
       }
 
       if (interaction.customId === "ticket_setup_cancel") {
         setupSessions.delete(key);
-        return privateReply(interaction, "Ticket setup cancelled.");
+
+        return privateReply(
+          interaction,
+          "Ticket setup cancelled."
+        );
       }
 
       if (
         !session.type ||
         !session.panelChannelId ||
+        !session.categoryId ||
         !session.logsChannelId
       ) {
         return privateReply(
           interaction,
-          "Setup is incomplete. Select a ticket type, panel channel and logs channel before confirming."
+          "Setup is incomplete. Choose a panel type, panel channel, ticket category and logs channel before confirming."
         );
       }
 
       const guild = interaction.guild;
+
       const panelChannel = await guild.channels
         .fetch(session.panelChannelId)
+        .catch(() => null);
+
+      const category = await guild.channels
+        .fetch(session.categoryId)
         .catch(() => null);
 
       const logsChannel = await guild.channels
@@ -945,50 +1261,52 @@ client.on("interactionCreate", async interaction => {
       if (
         !panelChannel ||
         panelChannel.type !== ChannelType.GuildText ||
+        !category ||
+        category.type !== ChannelType.GuildCategory ||
         !logsChannel ||
         logsChannel.type !== ChannelType.GuildText
       ) {
         return privateReply(
           interaction,
-          "One of the selected channels is unavailable. Run `/ticket` again and choose valid text channels."
+          "One of the selected channels is unavailable. Run `/ticket` again and choose valid channels."
         );
       }
 
       const botMember = await guild.members.fetchMe();
 
+      const panelPermissions =
+        panelChannel.permissionsFor(botMember);
+
       if (
-        !panelChannel.permissionsFor(botMember)?.has([
+        !panelPermissions?.has([
           PermissionFlagsBits.ViewChannel,
           PermissionFlagsBits.SendMessages,
         ])
       ) {
         return privateReply(
           interaction,
-          "I cannot post in the selected panel channel. Give the bot View Channel and Send Messages permissions."
+          "I cannot post in that panel channel. Give me View Channel and Send Messages permissions there."
         );
       }
-
-      data.ticketConfigs[guild.id] ??= {};
-      data.ticketConfigs[guild.id][session.type] = {
-        panelChannelId: session.panelChannelId,
-        logsChannelId: session.logsChannelId,
-      };
 
       const type = TICKET_TYPES[session.type];
 
       const openButton = makeButton(
         `ticket_open_${session.type}`,
-        type.button,
+        `${type.emoji} ${type.button}`,
         ButtonStyle.Primary
       );
 
       try {
         await panelChannel.send({
           ...v2(
-            `## London, Uxbridge | ${type.label}`,
-            type.intro,
-            "Press the button below to open a private ticket with the support team.",
-            "Please do not open multiple tickets for the same issue."
+            `# ${type.emoji} ${type.label}`,
+            "**LONDON, UXBRIDGE · SUPPORT CENTRE**",
+            type.description,
+            "━━━━━━━━━━━━━━━━━━━━━━━━",
+            `### Before opening a ticket\n${type.guidance}`,
+            "Your ticket will be private to you and the authorised support team. Please do not open duplicate tickets for the same issue.",
+            "Select the button below when you're ready."
           ),
           components: [
             new ActionRowBuilder().addComponents(openButton),
@@ -996,28 +1314,38 @@ client.on("interactionCreate", async interaction => {
         });
       } catch (error) {
         console.error("Could not post ticket panel:", error);
+
         return privateReply(
           interaction,
           "I could not post the panel. Check my permissions in the selected channel."
         );
       }
 
+      data.ticketConfigs[guild.id] ??= {};
+
+      data.ticketConfigs[guild.id][session.type] = {
+        panelChannelId: session.panelChannelId,
+        categoryId: session.categoryId,
+        logsChannelId: session.logsChannelId,
+      };
+
       saveData();
       setupSessions.delete(key);
 
       return privateReply(
         interaction,
-        "## Ticket Setup Confirmed",
-        `**Panel type:** ${type.label}`,
-        `**Panel channel:** ${panelChannel}`,
-        `**Logs channel:** ${logsChannel}`,
-        "Your panel has been posted successfully."
+        "## ✅ Ticket Setup Complete",
+        `**Panel:** ${type.label}`,
+        `**Panel channel:** <#${panelChannel.id}>`,
+        `**Ticket category:** <#${category.id}>`,
+        `**Logs channel:** <#${logsChannel.id}>`,
+        "Your Components V2 ticket panel has been published. Run `/ticket` again to configure another panel type."
       );
     }
 
-    // ==============================================
+    // ==================================================
     // INFORMATION DROPDOWN
-    // ==============================================
+    // ==================================================
 
     if (
       interaction.isStringSelectMenu() &&
@@ -1025,11 +1353,12 @@ client.on("interactionCreate", async interaction => {
     ) {
       const sections = {
         information: [
-          "## About London, Uxbridge",
+          "## 🇬🇧 About London, Uxbridge",
           "A British Roblox roleplay community aiming to provide organised, enjoyable and realistic roleplay.",
         ],
+
         server_rules: [
-          "## Server Rules",
+          "## 📜 Server Rules",
           "1. Treat members respectfully.",
           "2. Do not harass, threaten or discriminate against others.",
           "3. Do not spam or disrupt channels.",
@@ -1037,20 +1366,23 @@ client.on("interactionCreate", async interaction => {
           "5. Do not share private information without permission.",
           "6. Use the appropriate channels for support.",
         ],
+
         game_rules: [
-          "## Game Rules",
+          "## 🎮 Game Rules",
           "1. Keep roleplay appropriate and realistic.",
           "2. Do not exploit or cheat.",
           "3. Do not disrupt other players' roleplay.",
           "4. Follow department procedures.",
           "5. Do not impersonate staff.",
         ],
+
         departments: [
-          "## Departments",
+          "## 🏢 Departments",
           "Information about departments, applications and requirements will be published by authorised community staff.",
         ],
+
         disclaimer: [
-          "## Disclaimer",
+          "## ⚠️ Disclaimer",
           "London, Uxbridge is an independent Roblox roleplay community. It is not affiliated with or endorsed by the real London Borough of Hillingdon, the Metropolitan Police Service, the London Fire Brigade, the NHS or any other real-world public authority.",
           "Roleplay activities are fictional and for entertainment.",
         ],
@@ -1059,15 +1391,18 @@ client.on("interactionCreate", async interaction => {
       const selected = sections[interaction.values[0]];
 
       if (!selected) {
-        return privateReply(interaction, "That information section could not be found.");
+        return privateReply(
+          interaction,
+          "That information section could not be found."
+        );
       }
 
       return privateReply(interaction, ...selected);
     }
 
-    // ==============================================
+    // ==================================================
     // OPEN PRIVATE TICKETS
-    // ==============================================
+    // ==================================================
 
     if (
       interaction.isButton() &&
@@ -1075,7 +1410,10 @@ client.on("interactionCreate", async interaction => {
     ) {
       const guild = interaction.guild;
       const user = interaction.user;
-      const typeKey = interaction.customId.replace("ticket_open_", "");
+
+      const typeKey =
+        interaction.customId.replace("ticket_open_", "");
+
       const type = TICKET_TYPES[typeKey];
       const config = getConfig(guild.id)?.[typeKey];
 
@@ -1086,10 +1424,11 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      const existing = Object.values(data.tickets).find(ticket =>
-        ticket.guildId === guild.id &&
-        ticket.userId === user.id &&
-        !ticket.closed
+      const existing = Object.values(data.tickets).find(
+        ticket =>
+          ticket.guildId === guild.id &&
+          ticket.userId === user.id &&
+          !ticket.closed
       );
 
       if (existing) {
@@ -1100,29 +1439,50 @@ client.on("interactionCreate", async interaction => {
         if (existingChannel) {
           return privateReply(
             interaction,
-            `You already have an open ticket: ${existingChannel}`
+            `You already have an open ticket: <#${existingChannel.id}>`
           );
         }
 
         delete data.tickets[existing.channelId];
+        saveData();
       }
 
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await interaction.deferReply({
+        flags: MessageFlags.Ephemeral,
+      });
 
-      let category = guild.channels.cache.find(channel =>
-        channel.type === ChannelType.GuildCategory &&
-        channel.name.toLowerCase() === "support tickets"
-      );
+      const category = await guild.channels
+        .fetch(config.categoryId)
+        .catch(() => null);
 
-      if (!category) {
-        category = await guild.channels.create({
-          name: "Support Tickets",
-          type: ChannelType.GuildCategory,
-        });
+      if (
+        !category ||
+        category.type !== ChannelType.GuildCategory
+      ) {
+        return interaction.editReply(
+          "The configured ticket category no longer exists. Ask an administrator to run `/ticket` again."
+        );
       }
 
       const ticketNumber = data.nextTicketNumber++;
-      const ticketName = `ticket-${String(ticketNumber).padStart(4, "0")}`;
+      const username = slugify(user.username);
+
+      const baseName =
+        `${type.slug}-${username}`.slice(0, 90);
+
+      let ticketName = baseName;
+      let suffix = 2;
+
+      while (
+        guild.channels.cache.some(
+          channel =>
+            channel.parentId === category.id &&
+            channel.name === ticketName
+        )
+      ) {
+        ticketName =
+          `${baseName.slice(0, 85)}-${suffix++}`;
+      }
 
       const overwrites = [
         {
@@ -1136,6 +1496,7 @@ client.on("interactionCreate", async interaction => {
             PermissionFlagsBits.SendMessages,
             PermissionFlagsBits.ReadMessageHistory,
             PermissionFlagsBits.AttachFiles,
+            PermissionFlagsBits.EmbedLinks,
           ],
         },
         {
@@ -1150,8 +1511,11 @@ client.on("interactionCreate", async interaction => {
         },
       ];
 
-      const supportRole = guild.roles.cache.get(SUPPORT_ROLE_ID);
-      const escalationRole = guild.roles.cache.get(ESCALATION_ROLE_ID);
+      const supportRole =
+        guild.roles.cache.get(SUPPORT_ROLE_ID);
+
+      const escalationRole =
+        guild.roles.cache.get(ESCALATION_ROLE_ID);
 
       if (supportRole) {
         overwrites.push({
@@ -1160,6 +1524,7 @@ client.on("interactionCreate", async interaction => {
             PermissionFlagsBits.ViewChannel,
             PermissionFlagsBits.SendMessages,
             PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.AttachFiles,
           ],
         });
       }
@@ -1182,11 +1547,14 @@ client.on("interactionCreate", async interaction => {
           name: ticketName,
           type: ChannelType.GuildText,
           parent: category.id,
-          topic: `Ticket ${ticketNumber} | ${type.label} | Opened by ${user.tag}`,
+          topic: `Ticket #${ticketNumber} | ${type.label} | Opened by ${user.tag}`,
           permissionOverwrites: overwrites,
         });
       } catch (error) {
-        console.error("Ticket channel creation failed:", error);
+        console.error(
+          "Ticket channel creation failed:",
+          error
+        );
 
         return interaction.editReply(
           "I couldn't create the private ticket. Check my Manage Channels permission and the category permissions."
@@ -1208,38 +1576,66 @@ client.on("interactionCreate", async interaction => {
       saveData();
 
       const controls = new ActionRowBuilder().addComponents(
-        makeButton("ticket_claim", "Claim", ButtonStyle.Primary),
-        makeButton("ticket_close", "Close", ButtonStyle.Danger),
-        makeButton("ticket_modpanel", "Mod Panel", ButtonStyle.Secondary)
+        makeButton(
+          "ticket_claim",
+          "Claim Ticket",
+          ButtonStyle.Primary
+        ),
+        makeButton(
+          "ticket_close",
+          "Close Ticket",
+          ButtonStyle.Danger
+        ),
+        makeButton(
+          "ticket_modpanel",
+          "Staff Tools",
+          ButtonStyle.Secondary
+        )
       );
 
       await channel.send({
         ...v2(
-          `## ${type.label} | Ticket #${ticketNumber}`,
-          `Welcome ${user}. A support team member will assist you as soon as possible.`,
-          type.intro,
-          "**Please provide any relevant details or evidence below.**"
+          `# ${type.emoji} ${type.label}`,
+          `## Welcome, ${user.username}!`,
+          "Your private ticket is now open. A member of the support team will assist you as soon as possible.",
+          `**Ticket number:** #${ticketNumber}`,
+          "━━━━━━━━━━━━━━━━━━━━━━━━",
+          `### What happens next?\n${type.intro}`,
+          `### Please include\n${type.guidance}`,
+          "Keep all details and evidence in this channel. Please be patient while staff review your ticket.",
+          `**Ticket owner:** <@${user.id}>`
         ),
-        content: `<@${user.id}>${supportRole ? ` <@&${supportRole.id}>` : ""}`,
+        components: [controls],
         allowedMentions: {
           users: [user.id],
           roles: supportRole ? [supportRole.id] : [],
         },
-        components: [controls],
       });
+
+      if (supportRole) {
+        await channel.send({
+          content: `<@&${supportRole.id}>`,
+          allowedMentions: {
+            roles: [supportRole.id],
+          },
+        }).catch(console.error);
+      }
 
       await sendTicketLog(
         guild,
         ticket,
-        `**Action:** Ticket opened\n**Member:** ${user}\n**Channel:** ${channel}`
+        `**Action:** Ticket opened\n**Member:** <@${user.id}>\n**Channel:** <#${channel.id}>`
       );
 
-      return interaction.editReply(`Your private ticket has been created: ${channel}`);
+      return interaction.editReply({
+        content:
+          `✅ Your ${type.label} ticket has been created! Head to your ticket at <#${channel.id}>.`,
+      });
     }
 
-    // ==============================================
+    // ==================================================
     // TICKET CONTROLS
-    // ==============================================
+    // ==================================================
 
     if (
       interaction.isButton() &&
@@ -1254,42 +1650,68 @@ client.on("interactionCreate", async interaction => {
     ) {
       const ticket = getTicket(interaction.channelId);
 
-      if (!ticket || ticket.guildId !== interaction.guildId) {
-        return privateReply(interaction, "This ticket could not be found.");
+      if (
+        !ticket ||
+        ticket.guildId !== interaction.guildId
+      ) {
+        return privateReply(
+          interaction,
+          "This ticket could not be found."
+        );
       }
 
       if (!isStaff(interaction)) {
-        return privateReply(interaction, "Only authorised support staff can use these controls.");
+        return privateReply(
+          interaction,
+          "Only authorised support staff can use these controls."
+        );
       }
 
+      // Claim ticket
       if (interaction.customId === "ticket_claim") {
         if (ticket.closed) {
-          return privateReply(interaction, "This ticket is closed.");
+          return privateReply(
+            interaction,
+            "This ticket is closed."
+          );
         }
 
         if (ticket.claimedBy) {
-          return privateReply(interaction, `This ticket is already claimed by <@${ticket.claimedBy}>.`);
+          return privateReply(
+            interaction,
+            `This ticket is already claimed by <@${ticket.claimedBy}>.`
+          );
         }
 
         ticket.claimedBy = interaction.user.id;
         saveData();
 
         await interaction.channel.send(
-          v2("## Ticket Claimed", `This ticket has been claimed by ${interaction.user}.`)
+          v2(
+            "## 🛡️ Ticket Claimed",
+            `This ticket has been claimed by ${interaction.user}.`
+          )
         );
 
         await sendTicketLog(
           interaction.guild,
           ticket,
-          `**Action:** Ticket claimed\n**Staff:** ${interaction.user}\n**Channel:** ${interaction.channel}`
+          `**Action:** Ticket claimed\n**Staff:** <@${interaction.user.id}>`
         );
 
-        return privateReply(interaction, "You have claimed this ticket.");
+        return privateReply(
+          interaction,
+          "You have claimed this ticket."
+        );
       }
 
+      // Close ticket
       if (interaction.customId === "ticket_close") {
         if (ticket.closed) {
-          return privateReply(interaction, "This ticket is already closed.");
+          return privateReply(
+            interaction,
+            "This ticket is already closed."
+          );
         }
 
         ticket.closed = true;
@@ -1297,47 +1719,72 @@ client.on("interactionCreate", async interaction => {
         ticket.closedBy = interaction.user.id;
         saveData();
 
-        await interaction.channel.permissionOverwrites.edit(ticket.userId, {
-          SendMessages: false,
-          ViewChannel: true,
-        }).catch(console.error);
+        await interaction.channel.permissionOverwrites
+          .edit(ticket.userId, {
+            SendMessages: false,
+            ViewChannel: true,
+          })
+          .catch(console.error);
+
+        const ticketOwner = await client.users
+          .fetch(ticket.userId)
+          .catch(() => null);
 
         await interaction.channel.setName(
-          `closed-${String(ticket.ticketNumber).padStart(4, "0")}`
+          `closed-${ticket.type}-${slugify(
+            ticketOwner?.username || "ticket"
+          )}`.slice(0, 95)
         ).catch(console.error);
 
         await interaction.channel.send(
           v2(
-            "## Ticket Closed",
-            `This ticket was closed by ${interaction.user}.`
+            "## 🔒 Ticket Closed",
+            `This ticket was closed by ${interaction.user}.`,
+            "The ticket owner can no longer send messages. Staff can reopen it by editing channel permissions if needed."
           )
         );
 
         await sendTicketLog(
           interaction.guild,
           ticket,
-          `**Action:** Ticket closed\n**Opened by:** <@${ticket.userId}>\n**Closed by:** ${interaction.user}\n**Channel:** ${interaction.channel}`
+          `**Action:** Ticket closed\n**Opened by:** <@${ticket.userId}>\n**Closed by:** <@${interaction.user.id}>\n**Channel:** <#${interaction.channelId}>`
         );
 
-        return privateReply(interaction, "The ticket has been closed.");
+        return privateReply(
+          interaction,
+          "The ticket has been closed."
+        );
       }
 
+      // Staff tools
       if (interaction.customId === "ticket_modpanel") {
         const controls = new ActionRowBuilder().addComponents(
-          makeButton("ticket_rename", "Change Name"),
-          makeButton("ticket_unclaim", "Unclaim"),
-          makeButton("ticket_escalate", "Escalate", ButtonStyle.Primary)
+          makeButton(
+            "ticket_rename",
+            "Rename Ticket"
+          ),
+          makeButton(
+            "ticket_unclaim",
+            "Unclaim",
+            ButtonStyle.Secondary
+          ),
+          makeButton(
+            "ticket_escalate",
+            "Escalate",
+            ButtonStyle.Primary
+          )
         );
 
         return interaction.reply({
           ...privateV2(
-            "## Ticket Moderation Panel",
+            "## 🛠️ Ticket Staff Tools",
             "Choose an action for this ticket."
           ),
           components: [controls],
         });
       }
 
+      // Rename ticket
       if (interaction.customId === "ticket_rename") {
         const modal = new ModalBuilder()
           .setCustomId("ticket_rename_modal")
@@ -1350,11 +1797,13 @@ client.on("interactionCreate", async interaction => {
                 .setStyle(TextInputStyle.Short)
                 .setRequired(true)
                 .setMaxLength(90)
-          ));
+            )
+          );
 
         return interaction.showModal(modal);
       }
 
+      // Unclaim ticket
       if (interaction.customId === "ticket_unclaim") {
         ticket.claimedBy = null;
         saveData();
@@ -1362,50 +1811,67 @@ client.on("interactionCreate", async interaction => {
         await sendTicketLog(
           interaction.guild,
           ticket,
-          `**Action:** Ticket unclaimed\n**Staff:** ${interaction.user}`
+          `**Action:** Ticket unclaimed\n**Staff:** <@${interaction.user.id}>`
         );
 
-        return privateReply(interaction, "The ticket has been unclaimed.");
+        return privateReply(
+          interaction,
+          "The ticket has been unclaimed."
+        );
       }
 
+      // Escalate ticket
       if (interaction.customId === "ticket_escalate") {
-        const role = interaction.guild.roles.cache.get(ESCALATION_ROLE_ID);
+        const role = interaction.guild.roles.cache.get(
+          ESCALATION_ROLE_ID
+        );
 
         if (!role) {
           return privateReply(
             interaction,
-            "The escalation role was not found in this server. Check the role ID in index.js."
+            "The escalation role was not found. Check the role ID in index.js."
           );
         }
 
-        await interaction.channel.permissionOverwrites.edit(role.id, {
-          ViewChannel: true,
-          SendMessages: true,
-          ReadMessageHistory: true,
-        });
+        await interaction.channel.permissionOverwrites.edit(
+          role.id,
+          {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true,
+          }
+        );
+
+        await interaction.channel.send(
+          v2(
+            "## 🚨 Ticket Escalated",
+            `This ticket has been escalated by ${interaction.user}.`
+          )
+        );
 
         await interaction.channel.send({
-          ...v2(
-            "## Ticket Escalated",
-            `This ticket has been escalated by ${interaction.user}.`
-          ),
           content: `<@&${role.id}>`,
-          allowedMentions: { roles: [role.id] },
-        });
+          allowedMentions: {
+            roles: [role.id],
+          },
+        }).catch(console.error);
 
         await sendTicketLog(
           interaction.guild,
           ticket,
-          `**Action:** Ticket escalated\n**Staff:** ${interaction.user}`
+          `**Action:** Ticket escalated\n**Staff:** <@${interaction.user.id}>`
         );
 
-        return privateReply(interaction, "The ticket has been escalated.");
+        return privateReply(
+          interaction,
+          "The ticket has been escalated."
+        );
       }
     }
 
-    // ==============================================
+    // ==================================================
     // RENAME TICKET MODAL
-    // ==============================================
+    // ==================================================
 
     if (
       interaction.isModalSubmit() &&
@@ -1414,19 +1880,21 @@ client.on("interactionCreate", async interaction => {
       const ticket = getTicket(interaction.channelId);
 
       if (!ticket || !isStaff(interaction)) {
-        return privateReply(interaction, "You cannot rename this ticket.");
+        return privateReply(
+          interaction,
+          "You cannot rename this ticket."
+        );
       }
 
-      const newName = interaction.fields
-        .getTextInputValue("new_name")
-        .toLowerCase()
-        .replace(/[^a-z0-9-]/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-|-$/g, "")
-        .slice(0, 90);
+      const newName = slugify(
+        interaction.fields.getTextInputValue("new_name")
+      ).slice(0, 90);
 
       if (!newName) {
-        return privateReply(interaction, "Please enter a valid channel name.");
+        return privateReply(
+          interaction,
+          "Please enter a valid channel name."
+        );
       }
 
       await interaction.channel.setName(newName);
@@ -1434,10 +1902,13 @@ client.on("interactionCreate", async interaction => {
       await sendTicketLog(
         interaction.guild,
         ticket,
-        `**Action:** Ticket renamed\n**New name:** ${newName}\n**Staff:** ${interaction.user}`
+        `**Action:** Ticket renamed\n**New name:** ${newName}\n**Staff:** <@${interaction.user.id}>`
       );
 
-      return privateReply(interaction, `Ticket renamed to **${newName}**.`);
+      return privateReply(
+        interaction,
+        `Ticket renamed to **${newName}**.`
+      );
     }
   } catch (error) {
     console.error("Interaction error:", error);
@@ -1445,39 +1916,63 @@ client.on("interactionCreate", async interaction => {
     try {
       if (interaction.deferred || interaction.replied) {
         await interaction.followUp(
-          privateV2("Something went wrong. Please check the hosting logs.")
+          privateV2(
+            "Something went wrong. Please check the hosting logs."
+          )
         );
       } else {
         await interaction.reply(
-          privateV2("Something went wrong. Please check the hosting logs.")
+          privateV2(
+            "Something went wrong. Please check the hosting logs."
+          )
         );
       }
     } catch (replyError) {
-      console.error("Could not send error response:", replyError);
+      console.error(
+        "Could not send error response:",
+        replyError
+      );
     }
   }
 });
 
-// Automatically end shifts and operations after one hour.
+// ==================================================
+// AUTOMATIC SHIFT AND OPERATION EXPIRY
+// ==================================================
+
 setInterval(() => {
   const now = Date.now();
   let changed = false;
 
   for (const [guildId, shift] of Object.entries(data.shifts)) {
-    if (shift && now - shift.startedAt >= 60 * 60 * 1000) {
+    if (
+      shift &&
+      now - shift.startedAt >= 60 * 60 * 1000
+    ) {
       delete data.shifts[guildId];
       changed = true;
     }
   }
 
-  for (const [guildId, operation] of Object.entries(data.operations)) {
-    if (operation && now - operation.startedAt >= 60 * 60 * 1000) {
+  for (
+    const [guildId, operation] of Object.entries(data.operations)
+  ) {
+    if (
+      operation &&
+      now - operation.startedAt >= 60 * 60 * 1000
+    ) {
       delete data.operations[guildId];
       changed = true;
     }
   }
 
-  if (changed) saveData();
+  if (changed) {
+    saveData();
+  }
 }, 60 * 1000);
+
+// ==================================================
+// LOGIN
+// ==================================================
 
 client.login(TOKEN);
