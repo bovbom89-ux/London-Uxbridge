@@ -36,7 +36,6 @@ const GUILD_ID =
 
 const SUPPORT_URL = "https://discord.gg/DeuwuZFXN";
 
-// Role IDs supplied for your ticket system.
 const SUPPORT_ROLE_ID = "1558934432675790888";
 const ESCALATION_ROLE_ID = "1558933872824287313";
 
@@ -90,9 +89,15 @@ function makeText(content) {
 
 function makePanel(title, content, rows = []) {
   const container = new ContainerBuilder()
-    .addTextDisplayComponents(makeText(`# ${title}`))
-    .addSeparatorComponents(new SeparatorBuilder())
-    .addTextDisplayComponents(makeText(content));
+    .addTextDisplayComponents(
+      makeText(`# ${title}`)
+    )
+    .addSeparatorComponents(
+      new SeparatorBuilder()
+    )
+    .addTextDisplayComponents(
+      makeText(content)
+    );
 
   if (rows.length) {
     container.addActionRowComponents(...rows);
@@ -121,7 +126,12 @@ async function replyPanel(
   });
 }
 
-async function privatePanel(interaction, title, content, rows = []) {
+async function privatePanel(
+  interaction,
+  title,
+  content,
+  rows = []
+) {
   return interaction.reply({
     components: [makePanel(title, content, rows)],
     flags: v2Flags(true),
@@ -129,7 +139,7 @@ async function privatePanel(interaction, title, content, rows = []) {
 }
 
 // ==================================================
-// COMMUNITY INFORMATION
+// INFORMATION MENU
 // ==================================================
 
 function informationMenu() {
@@ -258,11 +268,13 @@ function ticketMenu() {
       .setCustomId("uxbridge_ticket_create")
       .setPlaceholder("Choose a ticket type...")
       .addOptions(
-        Object.entries(ticketTypes).map(([value, type]) => ({
-          label: type.label,
-          description: type.description,
-          value,
-        }))
+        Object.entries(ticketTypes).map(
+          ([value, type]) => ({
+            label: type.label,
+            description: type.description,
+            value,
+          })
+        )
       )
   );
 }
@@ -338,14 +350,21 @@ async function requireTicketStaff(interaction) {
       "Staff Only",
       "You need the support role or administrator permissions to use this ticket control."
     );
+
     return false;
   }
 
   return true;
 }
 
-async function logTicket(guild, ticket, action, staffId = null) {
+async function logTicket(
+  guild,
+  ticket,
+  action,
+  staffId = null
+) {
   const config = data.ticketConfigs[guild.id];
+
   if (!config?.logsChannelId) return;
 
   try {
@@ -353,7 +372,9 @@ async function logTicket(guild, ticket, action, staffId = null) {
       config.logsChannelId
     );
 
-    if (!logsChannel || !logsChannel.isTextBased()) return;
+    if (!logsChannel || !logsChannel.isTextBased()) {
+      return;
+    }
 
     const details =
       `**Ticket:** ${ticket.channelName || ticket.typeLabel}\n` +
@@ -363,7 +384,9 @@ async function logTicket(guild, ticket, action, staffId = null) {
       (ticket.claimedBy
         ? `**Claimed by:** <@${ticket.claimedBy}>\n`
         : "") +
-      (staffId ? `**Action by:** <@${staffId}>\n` : "") +
+      (staffId
+        ? `**Action by:** <@${staffId}>\n`
+        : "") +
       `**Action:** ${action}\n` +
       `**Opened:** <t:${Math.floor(ticket.createdAt / 1000)}:F>\n` +
       `**Logged:** <t:${Math.floor(Date.now() / 1000)}:F>`;
@@ -383,11 +406,23 @@ async function createTicket(interaction, typeKey) {
   const config = data.ticketConfigs[interaction.guildId];
   const type = ticketTypes[typeKey];
 
-  if (!config || !config.categoryId || !config.logsChannelId) {
+  if (!type) {
+    return privatePanel(
+      interaction,
+      "Invalid Ticket Type",
+      "Please select one of the available ticket types."
+    );
+  }
+
+  if (
+    !config ||
+    !config.categoryId ||
+    !config.logsChannelId
+  ) {
     return privatePanel(
       interaction,
       "Tickets Not Configured",
-      "An administrator needs to run `/ticket` again to configure the ticket system."
+      "An administrator needs to run `/ticket` to configure the ticket system."
     );
   }
 
@@ -399,9 +434,10 @@ async function createTicket(interaction, typeKey) {
   );
 
   if (existing) {
-    const existingChannel = await interaction.guild.channels
-      .fetch(existing.channelId)
-      .catch(() => null);
+    const existingChannel =
+      await interaction.guild.channels.fetch(
+        existing.channelId
+      ).catch(() => null);
 
     if (existingChannel) {
       return privatePanel(
@@ -415,11 +451,14 @@ async function createTicket(interaction, typeKey) {
     saveData();
   }
 
-  const category = await interaction.guild.channels
-    .fetch(config.categoryId)
-    .catch(() => null);
+  const category = await interaction.guild.channels.fetch(
+    config.categoryId
+  ).catch(() => null);
 
-  if (!category || category.type !== ChannelType.GuildCategory) {
+  if (
+    !category ||
+    category.type !== ChannelType.GuildCategory
+  ) {
     return privatePanel(
       interaction,
       "Ticket Category Missing",
@@ -437,9 +476,7 @@ async function createTicket(interaction, typeKey) {
   const permissionOverwrites = [
     {
       id: interaction.guild.roles.everyone.id,
-      deny: [
-        PermissionFlagsBits.ViewChannel,
-      ],
+      deny: [PermissionFlagsBits.ViewChannel],
     },
     {
       id: interaction.user.id,
@@ -532,7 +569,11 @@ async function createTicket(interaction, typeKey) {
     console.error("Ticket welcome message failed:", error);
   }
 
-  await logTicket(interaction.guild, ticket, "Ticket opened");
+  await logTicket(
+    interaction.guild,
+    ticket,
+    "Ticket opened"
+  );
 
   return privatePanel(
     interaction,
@@ -553,7 +594,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("information")
     .setDescription("Post the community information menu.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.Administrator
+    )
     .addChannelOption(option =>
       option
         .setName("channel")
@@ -564,8 +607,10 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("ticket")
-    .setDescription("Configure and post the ticket panel.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDescription("Configure and post the ticket panel. (ONLY SUPPORT)")
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.Administrator
+    )
     .addChannelOption(option =>
       option
         .setName("panel_channel")
@@ -672,7 +717,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("warn")
     .setDescription("Record a warning for a member.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ModerateMembers
+    )
     .addUserOption(option =>
       option
         .setName("user")
@@ -689,7 +736,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("timeout")
     .setDescription("Timeout a member.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ModerateMembers
+    )
     .addUserOption(option =>
       option
         .setName("user")
@@ -714,7 +763,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("kick")
     .setDescription("Kick a member.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.KickMembers
+    )
     .addUserOption(option =>
       option
         .setName("user")
@@ -731,7 +782,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("ban")
     .setDescription("Ban a member.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.BanMembers
+    )
     .addUserOption(option =>
       option
         .setName("user")
@@ -748,7 +801,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("purge")
     .setDescription("Delete recent messages.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageMessages
+    )
     .addIntegerOption(option =>
       option
         .setName("amount")
@@ -761,7 +816,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("modlogs")
     .setDescription("View warning records stored by this bot.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ModerateMembers
+    )
     .addUserOption(option =>
       option
         .setName("user")
@@ -772,7 +829,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("announce")
     .setDescription("Send a community announcement.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageGuild
+    )
     .addStringOption(option =>
       option
         .setName("message")
@@ -782,7 +841,7 @@ const commands = [
 ];
 
 // ==================================================
-// EVENT HELPERS
+// STAFF SHIFTS AND OPERATIONS
 // ==================================================
 
 const activeTimers = new Map();
@@ -804,7 +863,9 @@ function scheduleAutomaticEnd(key, event) {
 
   const timer = setTimeout(async () => {
     try {
-      const channel = await client.channels.fetch(event.channelId);
+      const channel = await client.channels.fetch(
+        event.channelId
+      );
 
       if (channel?.isTextBased() && channel.isSendable()) {
         await channel.send({
@@ -820,7 +881,10 @@ function scheduleAutomaticEnd(key, event) {
         });
       }
     } catch (error) {
-      console.error("Automatic event-end message failed:", error);
+      console.error(
+        "Automatic event-end message failed:",
+        error
+      );
     }
 
     delete data.activeEvents[key];
@@ -831,8 +895,17 @@ function scheduleAutomaticEnd(key, event) {
   activeTimers.set(key, timer);
 }
 
-async function startEvent(interaction, type, name, extraInfo = "") {
-  const key = eventKey(interaction.guildId, type, interaction.user.id);
+async function startEvent(
+  interaction,
+  type,
+  name,
+  extraInfo = ""
+) {
+  const key = eventKey(
+    interaction.guildId,
+    type,
+    interaction.user.id
+  );
 
   if (data.activeEvents[key]) {
     return privatePanel(
@@ -861,18 +934,27 @@ async function startEvent(interaction, type, name, extraInfo = "") {
 
   return replyPanel(
     interaction,
-    type === "shift" ? "Staff Shift Started" : "Military Operation Started",
+    type === "shift"
+      ? "Staff Shift Started"
+      : "Military Operation Started",
     `**${name}**\n\n` +
       `**Host:** ${interaction.user}\n` +
       `**Started:** ${discordDate(startedAt)}\n` +
       `**Scheduled end:** ${discordDate(endsAt)}\n` +
       `**Duration:** 1 hour` +
-      (extraInfo ? `\n\n**Information:**\n${extraInfo}` : "")
+      (extraInfo
+        ? `\n\n**Information:**\n${extraInfo}`
+        : "")
   );
 }
 
 async function endEvent(interaction, type) {
-  const key = eventKey(interaction.guildId, type, interaction.user.id);
+  const key = eventKey(
+    interaction.guildId,
+    type,
+    interaction.user.id
+  );
+
   const event = data.activeEvents[key];
 
   if (!event) {
@@ -893,49 +975,66 @@ async function endEvent(interaction, type) {
 
   return replyPanel(
     interaction,
-    type === "shift" ? "Staff Shift Ended" : "Military Operation Ended",
+    type === "shift"
+      ? "Staff Shift Ended"
+      : "Military Operation Ended",
     `**${event.name}**\nEnded by ${interaction.user}.\n\nThe session has been ended manually.`
   );
 }
 
 // ==================================================
-// READY AND COMMAND REGISTRATION
+// REGISTER COMMANDS ON STARTUP
 // ==================================================
 
 client.once("ready", async () => {
-  console.log(`London, Uxbridge bot online as ${client.user.tag}`);
+  console.log(
+    `London, Uxbridge bot online as ${client.user.tag}`
+  );
 
   try {
     const rest = new REST({ version: "10" }).setToken(TOKEN);
 
     await rest.put(
-      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-      { body: commands.map(command => command.toJSON()) }
+      Routes.applicationGuildCommands(
+        CLIENT_ID,
+        GUILD_ID
+      ),
+      {
+        body: commands.map(command => command.toJSON()),
+      }
     );
 
-    console.log(`Registered ${commands.length} slash commands.`);
+    console.log(
+      `Registered ${commands.length} slash commands.`
+    );
   } catch (error) {
-    console.error("Slash command registration failed:", error);
+    console.error(
+      "Slash command registration failed:",
+      error
+    );
   }
 
-  for (const [key, event] of Object.entries(data.activeEvents)) {
+  for (const [key, event] of Object.entries(
+    data.activeEvents
+  )) {
     scheduleAutomaticEnd(key, event);
   }
 });
 
 // ==================================================
-// INTERACTIONS
+// INTERACTION HANDLER
 // ==================================================
 
 client.on("interactionCreate", async interaction => {
   try {
     // INFORMATION DROPDOWN
-    // Private response; the public panel never changes.
     if (
       interaction.isStringSelectMenu() &&
       interaction.customId === "uxbridge_information_menu"
     ) {
-      const page = informationPages[interaction.values[0]];
+      const page = informationPages[
+        interaction.values[0]
+      ];
 
       if (!page) {
         return privatePanel(
@@ -946,7 +1045,9 @@ client.on("interactionCreate", async interaction => {
       }
 
       return interaction.reply({
-        components: [makePanel(page.title, page.content)],
+        components: [
+          makePanel(page.title, page.content),
+        ],
         flags: v2Flags(true),
       });
     }
@@ -956,11 +1057,17 @@ client.on("interactionCreate", async interaction => {
       interaction.isStringSelectMenu() &&
       interaction.customId === "uxbridge_ticket_create"
     ) {
-      return createTicket(interaction, interaction.values[0]);
+      return createTicket(
+        interaction,
+        interaction.values[0]
+      );
     }
 
     // TICKET BUTTONS
-    if (interaction.isButton() && interaction.customId.startsWith("ticket_")) {
+    if (
+      interaction.isButton() &&
+      interaction.customId.startsWith("ticket_")
+    ) {
       const ticket = getTicket(interaction.channelId);
 
       if (!ticket) {
@@ -979,10 +1086,16 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
+      // CLAIM
       if (interaction.customId === "ticket_claim") {
-        if (!(await requireTicketStaff(interaction))) return;
+        if (!(await requireTicketStaff(interaction))) {
+          return;
+        }
 
-        if (ticket.claimedBy && ticket.claimedBy !== interaction.user.id) {
+        if (
+          ticket.claimedBy &&
+          ticket.claimedBy !== interaction.user.id
+        ) {
           return privatePanel(
             interaction,
             "Already Claimed",
@@ -1015,8 +1128,11 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
+      // CLOSE
       if (interaction.customId === "ticket_close") {
-        if (!(await requireTicketStaff(interaction))) return;
+        if (!(await requireTicketStaff(interaction))) {
+          return;
+        }
 
         ticket.closed = true;
         ticket.closedAt = Date.now();
@@ -1040,7 +1156,10 @@ client.on("interactionCreate", async interaction => {
           .catch(() => {});
 
         await interaction.channel.setName(
-          `closed-${interaction.channel.name}`.slice(0, 100)
+          `closed-${interaction.channel.name}`.slice(
+            0,
+            100
+          )
         ).catch(() => {});
 
         return interaction.reply({
@@ -1054,22 +1173,36 @@ client.on("interactionCreate", async interaction => {
         });
       }
 
-      if (interaction.customId === "ticket_modpanel") {
-        if (!(await requireTicketStaff(interaction))) return;
+      // MOD PANEL
+      if (
+        interaction.customId === "ticket_modpanel"
+      ) {
+        if (!(await requireTicketStaff(interaction))) {
+          return;
+        }
 
         return privatePanel(
           interaction,
           "Ticket Mod Panel",
           `**Ticket:** ${interaction.channel.name}\n` +
             `**Opened by:** <@${ticket.userId}>\n` +
-            `**Claimed by:** ${ticket.claimedBy ? `<@${ticket.claimedBy}>` : "Nobody"}\n\n` +
+            `**Claimed by:** ${
+              ticket.claimedBy
+                ? `<@${ticket.claimedBy}>`
+                : "Nobody"
+            }\n\n` +
             "Choose a ticket management action below.",
           [modPanelButtons()]
         );
       }
 
-      if (interaction.customId === "ticket_rename") {
-        if (!(await requireTicketStaff(interaction))) return;
+      // CHANGE TICKET NAME
+      if (
+        interaction.customId === "ticket_rename"
+      ) {
+        if (!(await requireTicketStaff(interaction))) {
+          return;
+        }
 
         const modal = new ModalBuilder()
           .setCustomId("ticket_rename_modal")
@@ -1085,14 +1218,21 @@ client.on("interactionCreate", async interaction => {
           .setValue(interaction.channel.name);
 
         modal.addComponents(
-          new ActionRowBuilder().addComponents(nameInput)
+          new ActionRowBuilder().addComponents(
+            nameInput
+          )
         );
 
         return interaction.showModal(modal);
       }
 
-      if (interaction.customId === "ticket_unclaim") {
-        if (!(await requireTicketStaff(interaction))) return;
+      // UNCLAIM
+      if (
+        interaction.customId === "ticket_unclaim"
+      ) {
+        if (!(await requireTicketStaff(interaction))) {
+          return;
+        }
 
         if (!ticket.claimedBy) {
           return privatePanel(
@@ -1119,8 +1259,13 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      if (interaction.customId === "ticket_escalate") {
-        if (!(await requireTicketStaff(interaction))) return;
+      // ESCALATE
+      if (
+        interaction.customId === "ticket_escalate"
+      ) {
+        if (!(await requireTicketStaff(interaction))) {
+          return;
+        }
 
         try {
           await interaction.channel.permissionOverwrites.edit(
@@ -1132,7 +1277,10 @@ client.on("interactionCreate", async interaction => {
             }
           );
         } catch (error) {
-          console.error("Could not grant escalation role access:", error);
+          console.error(
+            "Could not grant escalation role access:",
+            error
+          );
 
           return privatePanel(
             interaction,
@@ -1148,7 +1296,9 @@ client.on("interactionCreate", async interaction => {
 
         await interaction.channel.send({
           content: `<@&${ESCALATION_ROLE_ID}>`,
-          allowedMentions: { roles: [ESCALATION_ROLE_ID] },
+          allowedMentions: {
+            roles: [ESCALATION_ROLE_ID],
+          },
           components: [
             makePanel(
               "Ticket Escalated",
@@ -1173,7 +1323,7 @@ client.on("interactionCreate", async interaction => {
       }
     }
 
-    // RENAME MODAL
+    // RENAME MODAL SUBMISSION
     if (
       interaction.isModalSubmit() &&
       interaction.customId === "ticket_rename_modal"
@@ -1243,7 +1393,7 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // INFORMATION PANEL
+    // INFORMATION
     if (command === "information") {
       if (!isAdministrator(interaction)) {
         return privatePanel(
@@ -1253,9 +1403,13 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      const channel = interaction.options.getChannel("channel");
+      const channel =
+        interaction.options.getChannel("channel");
 
-      if (!channel?.isTextBased() || !channel.isSendable()) {
+      if (
+        !channel?.isTextBased() ||
+        !channel.isSendable()
+      ) {
         return privatePanel(
           interaction,
           "Invalid Channel",
@@ -1293,8 +1447,10 @@ client.on("interactionCreate", async interaction => {
 
       const panelChannel =
         interaction.options.getChannel("panel_channel");
+
       const category =
         interaction.options.getChannel("ticket_category");
+
       const logsChannel =
         interaction.options.getChannel("logs_channel");
 
@@ -1339,7 +1495,10 @@ client.on("interactionCreate", async interaction => {
           flags: MessageFlags.IsComponentsV2,
         });
       } catch (error) {
-        console.error("Ticket panel could not be posted:", error);
+        console.error(
+          "Ticket panel could not be posted:",
+          error
+        );
 
         return privatePanel(
           interaction,
@@ -1360,12 +1519,13 @@ client.on("interactionCreate", async interaction => {
 
     // HELP
     if (command === "help") {
-      const supportButton = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setLabel("Join Support Server")
-          .setStyle(ButtonStyle.Link)
-          .setURL(SUPPORT_URL)
-      );
+      const supportButton =
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setLabel("Join Support Server")
+            .setStyle(ButtonStyle.Link)
+            .setURL(SUPPORT_URL)
+        );
 
       return replyPanel(
         interaction,
@@ -1389,7 +1549,8 @@ client.on("interactionCreate", async interaction => {
     // USER INFO
     if (command === "userinfo") {
       const user =
-        interaction.options.getUser("user") || interaction.user;
+        interaction.options.getUser("user") ||
+        interaction.user;
 
       const member = await interaction.guild.members
         .fetch(user.id)
@@ -1411,7 +1572,8 @@ client.on("interactionCreate", async interaction => {
 
     // STAFF SHIFT
     if (command === "staff-shift") {
-      const subcommand = interaction.options.getSubcommand();
+      const subcommand =
+        interaction.options.getSubcommand();
 
       if (subcommand === "start") {
         return startEvent(
@@ -1427,7 +1589,8 @@ client.on("interactionCreate", async interaction => {
 
     // MILITARY OPERATION
     if (command === "military-operation") {
-      const subcommand = interaction.options.getSubcommand();
+      const subcommand =
+        interaction.options.getSubcommand();
 
       if (subcommand === "start") {
         return startEvent(
@@ -1439,7 +1602,9 @@ client.on("interactionCreate", async interaction => {
       }
 
       if (subcommand === "end") {
-        const entry = Object.entries(data.activeEvents).find(
+        const entry = Object.entries(
+          data.activeEvents
+        ).find(
           ([, event]) =>
             event.guildId === interaction.guildId &&
             event.type === "operation" &&
@@ -1471,7 +1636,9 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      const active = Object.values(data.activeEvents).find(
+      const active = Object.values(
+        data.activeEvents
+      ).find(
         event =>
           event.guildId === interaction.guildId &&
           event.type === "operation"
@@ -1488,7 +1655,9 @@ client.on("interactionCreate", async interaction => {
 
     // TRAINING SESSION
     if (command === "training-session") {
-      const name = interaction.options.getString("name");
+      const name =
+        interaction.options.getString("name");
+
       const information =
         interaction.options.getString("information");
 
@@ -1496,16 +1665,22 @@ client.on("interactionCreate", async interaction => {
         interaction,
         "Training Session",
         `**Session:** ${name}\n**Hosted by:** ${interaction.user}` +
-          (information ? `\n\n**Information:**\n${information}` : "")
+          (information
+            ? `\n\n**Information:**\n${information}`
+            : "")
       );
     }
 
     // WARN
     if (command === "warn") {
-      const user = interaction.options.getUser("user");
-      const reason = interaction.options.getString("reason");
+      const user =
+        interaction.options.getUser("user");
+
+      const reason =
+        interaction.options.getString("reason");
 
       data.warnings[user.id] ||= [];
+
       data.warnings[user.id].push({
         guildId: interaction.guildId,
         moderatorId: interaction.user.id,
@@ -1527,14 +1702,23 @@ client.on("interactionCreate", async interaction => {
 
     // TIMEOUT
     if (command === "timeout") {
-      const user = interaction.options.getUser("user");
-      const minutes = interaction.options.getInteger("minutes");
+      const user =
+        interaction.options.getUser("user");
+
+      const minutes =
+        interaction.options.getInteger("minutes");
+
       const reason =
         interaction.options.getString("reason") ||
         "No reason provided";
 
-      const member = await interaction.guild.members.fetch(user.id);
-      await member.timeout(minutes * 60 * 1000, reason);
+      const member =
+        await interaction.guild.members.fetch(user.id);
+
+      await member.timeout(
+        minutes * 60 * 1000,
+        reason
+      );
 
       return replyPanel(
         interaction,
@@ -1545,12 +1729,16 @@ client.on("interactionCreate", async interaction => {
 
     // KICK
     if (command === "kick") {
-      const user = interaction.options.getUser("user");
+      const user =
+        interaction.options.getUser("user");
+
       const reason =
         interaction.options.getString("reason") ||
         "No reason provided";
 
-      const member = await interaction.guild.members.fetch(user.id);
+      const member =
+        await interaction.guild.members.fetch(user.id);
+
       await member.kick(reason);
 
       return replyPanel(
@@ -1562,12 +1750,16 @@ client.on("interactionCreate", async interaction => {
 
     // BAN
     if (command === "ban") {
-      const user = interaction.options.getUser("user");
+      const user =
+        interaction.options.getUser("user");
+
       const reason =
         interaction.options.getString("reason") ||
         "No reason provided";
 
-      await interaction.guild.members.ban(user.id, { reason });
+      await interaction.guild.members.ban(user.id, {
+        reason,
+      });
 
       return replyPanel(
         interaction,
@@ -1578,8 +1770,11 @@ client.on("interactionCreate", async interaction => {
 
     // PURGE
     if (command === "purge") {
-      const amount = interaction.options.getInteger("amount");
-      const deleted = await interaction.channel.bulkDelete(amount, true);
+      const amount =
+        interaction.options.getInteger("amount");
+
+      const deleted =
+        await interaction.channel.bulkDelete(amount, true);
 
       return replyPanel(
         interaction,
@@ -1590,10 +1785,14 @@ client.on("interactionCreate", async interaction => {
 
     // MODERATION LOGS
     if (command === "modlogs") {
-      const user = interaction.options.getUser("user");
+      const user =
+        interaction.options.getUser("user");
 
-      const warnings = (data.warnings[user.id] || []).filter(
-        warning => warning.guildId === interaction.guildId
+      const warnings = (
+        data.warnings[user.id] || []
+      ).filter(
+        warning =>
+          warning.guildId === interaction.guildId
       );
 
       const content = warnings.length
@@ -1615,9 +1814,10 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ANNOUNCEMENT
+    // ANNOUNCE
     if (command === "announce") {
-      const message = interaction.options.getString("message");
+      const message =
+        interaction.options.getString("message");
 
       return replyPanel(
         interaction,
@@ -1634,12 +1834,16 @@ client.on("interactionCreate", async interaction => {
     if (interaction.isRepliable()) {
       if (interaction.deferred || interaction.replied) {
         await interaction.followUp({
-          components: [makePanel("Action Failed", errorContent)],
+          components: [
+            makePanel("Action Failed", errorContent),
+          ],
           flags: v2Flags(true),
         }).catch(() => {});
       } else {
         await interaction.reply({
-          components: [makePanel("Action Failed", errorContent)],
+          components: [
+            makePanel("Action Failed", errorContent),
+          ],
           flags: v2Flags(true),
         }).catch(() => {});
       }
