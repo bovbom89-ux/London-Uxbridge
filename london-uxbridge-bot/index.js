@@ -16,23 +16,24 @@ require("dotenv").config();
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
-const GUILD_ID = process.env.DISCORD_GUILD_ID || process.env.GUILD_ID;
+const GUILD_ID =
+  process.env.DISCORD_GUILD_ID || process.env.GUILD_ID;
+
+const SUPPORT_URL = "https://discord.gg/DeuwuZFXN";
+const FOOTER = "London, Uxbridge";
 
 if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
+  console.error("Missing required environment variables.");
   console.error(
-    "Missing DISCORD_TOKEN, DISCORD_CLIENT_ID or DISCORD_GUILD_ID."
+    "Required: DISCORD_TOKEN, DISCORD_CLIENT_ID, DISCORD_GUILD_ID"
   );
   process.exit(1);
 }
-
-const FOOTER = "London, Uxbridge";
-const SUPPORT_URL = "https://discord.gg/DeuwuZFXN";
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
-// Temporary in-memory records. These reset when the bot restarts.
 const shifts = new Map();
 const warnings = new Map();
 const modlogs = new Map();
@@ -66,37 +67,32 @@ function makePanel(title, sections = []) {
   return container;
 }
 
-async function panelReply(interaction, title, sections, ephemeral = false) {
+async function panelReply(
+  interaction,
+  title,
+  sections = [],
+  ephemeral = false
+) {
   return interaction.reply({
     components: [makePanel(title, sections)],
-    flags: MessageFlags.IsComponentsV2 |
+    flags:
+      MessageFlags.IsComponentsV2 |
       (ephemeral ? MessageFlags.Ephemeral : 0)
   });
 }
 
-function logAction(guildId, userId, action, reason, moderatorId) {
-  if (!modlogs.has(guildId)) modlogs.set(guildId, []);
+function recordAction(guildId, userId, action, reason, moderatorId) {
+  if (!modlogs.has(guildId)) {
+    modlogs.set(guildId, []);
+  }
 
   modlogs.get(guildId).push({
     userId,
     action,
     reason,
     moderatorId,
-    date: new Date().toISOString()
+    date: Date.now()
   });
-}
-
-function addWarning(guildId, userId, reason, moderatorId) {
-  const key = `${guildId}:${userId}`;
-
-  if (!warnings.has(key)) warnings.set(key, []);
-  warnings.get(key).push({
-    reason,
-    moderatorId,
-    date: new Date().toISOString()
-  });
-
-  logAction(guildId, userId, "Warning", reason, moderatorId);
 }
 
 const commands = [
@@ -121,7 +117,7 @@ const commands = [
     .setDescription("Start or end a hosted shift")
     .addStringOption(option =>
       option.setName("action")
-        .setDescription("What you want to do")
+        .setDescription("Choose an action")
         .setRequired(true)
         .addChoices(
           { name: "Start shift", value: "start" },
@@ -131,14 +127,14 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("shift-stats")
-    .setDescription("View your recorded shift statistics"),
+    .setDescription("View your shift statistics"),
 
   new SlashCommandBuilder()
     .setName("military-operation")
     .setDescription("Manage a military operation")
     .addStringOption(option =>
       option.setName("action")
-        .setDescription("Operation action")
+        .setDescription("Choose an action")
         .setRequired(true)
         .addChoices(
           { name: "Start", value: "start" },
@@ -157,14 +153,16 @@ const commands = [
     .setDescription("Announce a training session")
     .addStringOption(option =>
       option.setName("details")
-        .setDescription("Session details and time")
+        .setDescription("Training details and time")
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("warn")
     .setDescription("Warn a member")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ModerateMembers
+    )
     .addUserOption(option =>
       option.setName("user")
         .setDescription("Member to warn")
@@ -179,7 +177,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("timeout")
     .setDescription("Timeout a member")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ModerateMembers
+    )
     .addUserOption(option =>
       option.setName("user")
         .setDescription("Member to timeout")
@@ -187,7 +187,7 @@ const commands = [
     )
     .addIntegerOption(option =>
       option.setName("minutes")
-        .setDescription("Timeout duration in minutes")
+        .setDescription("Duration in minutes")
         .setRequired(true)
         .setMinValue(1)
         .setMaxValue(40320)
@@ -201,7 +201,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("kick")
     .setDescription("Kick a member")
-    .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.KickMembers
+    )
     .addUserOption(option =>
       option.setName("user")
         .setDescription("Member to kick")
@@ -216,7 +218,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("ban")
     .setDescription("Ban a member")
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.BanMembers
+    )
     .addUserOption(option =>
       option.setName("user")
         .setDescription("Member to ban")
@@ -231,10 +235,12 @@ const commands = [
   new SlashCommandBuilder()
     .setName("purge")
     .setDescription("Delete recent messages")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageMessages
+    )
     .addIntegerOption(option =>
       option.setName("amount")
-        .setDescription("Number of messages to delete (1–100)")
+        .setDescription("Number of messages to delete")
         .setRequired(true)
         .setMinValue(1)
         .setMaxValue(100)
@@ -252,17 +258,21 @@ const commands = [
   new SlashCommandBuilder()
     .setName("modlogs")
     .setDescription("View recorded moderation actions")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ModerateMembers
+    )
     .addUserOption(option =>
       option.setName("user")
-        .setDescription("Member whose records you want to view")
+        .setDescription("Member to inspect")
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("announce")
     .setDescription("Publish a server announcement")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageGuild
+    )
     .addStringOption(option =>
       option.setName("message")
         .setDescription("Announcement text")
@@ -270,28 +280,36 @@ const commands = [
     )
 ];
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log(`Logged in as ${client.user.tag}`);
+  console.log("Registering slash commands...");
 
   try {
     const rest = new REST({ version: "10" }).setToken(TOKEN);
 
     await rest.put(
       Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-      { body: commands.map(command => command.toJSON()) }
+      {
+        body: commands.map(command => command.toJSON())
+      }
     );
 
-    console.log(`Registered ${commands.length} slash commands.`);
-    console.log(`Support server: ${SUPPORT_URL}`);
+    console.log(
+      `Successfully registered ${commands.length} slash commands.`
+    );
   } catch (error) {
-    console.error("Command registration failed:", error);
+    console.error("Slash command registration failed.");
+    console.error("HTTP status:", error.status);
+    console.error("Discord error:", error.rawError || error.message);
+    console.error(error);
   }
 });
 
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  const { commandName, guild, user } = interaction;
+  const guild = interaction.guild;
+  const user = interaction.user;
 
   try {
     if (!guild) {
@@ -303,7 +321,7 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    switch (commandName) {
+    switch (interaction.commandName) {
       case "ping":
         return panelReply(interaction, "Bot status", [
           `WebSocket latency: ${client.ws.ping} ms`
@@ -318,7 +336,7 @@ client.on("interactionCreate", async interaction => {
       case "rules":
         return panelReply(interaction, "Server rules", [
           "**1. Respect**\nTreat other members respectfully.",
-          "**2. Staff**\nFollow legitimate staff instructions.",
+          "**2. Staff instructions**\nFollow legitimate staff instructions.",
           "**3. Conduct**\nDo not spam or disrupt the server.",
           "**4. Channels**\nUse the correct channels.",
           "**5. Discord**\nFollow Discord's Terms of Service."
@@ -335,9 +353,12 @@ client.on("interactionCreate", async interaction => {
 
         if (action === "start") {
           if (shifts.has(key)) {
-            return panelReply(interaction, "Shift already active", [
-              "You already have a recorded shift in progress."
-            ], true);
+            return panelReply(
+              interaction,
+              "Shift already active",
+              ["You already have a shift in progress."],
+              true
+            );
           }
 
           shifts.set(key, { started: Date.now() });
@@ -351,17 +372,23 @@ client.on("interactionCreate", async interaction => {
         const shift = shifts.get(key);
 
         if (!shift) {
-          return panelReply(interaction, "No active shift", [
-            "You do not have a recorded shift in progress."
-          ], true);
+          return panelReply(
+            interaction,
+            "No active shift",
+            ["You do not have a shift in progress."],
+            true
+          );
         }
 
-        const duration = Math.floor((Date.now() - shift.started) / 1000);
+        const minutes = Math.floor(
+          (Date.now() - shift.started) / 60000
+        );
+
         shifts.delete(key);
 
         return panelReply(interaction, "Shift ended", [
           `Host: ${user}`,
-          `Duration: ${Math.floor(duration / 60)} minutes`
+          `Duration: ${minutes} minutes`
         ]);
       }
 
@@ -373,23 +400,30 @@ client.on("interactionCreate", async interaction => {
           shift
             ? `Current shift started <t:${Math.floor(shift.started / 1000)}:R>.`
             : "You have no active shift.",
-          "Only the current shift is tracked. Historical totals are not stored."
+          "Historical shift totals are not stored."
         ], true);
       }
 
       case "military-operation": {
         const action = interaction.options.getString("action");
-        const name = interaction.options.getString("name") || "Untitled operation";
-        const key = guild.id;
+        const name =
+          interaction.options.getString("name") || "Untitled operation";
 
         if (action === "start") {
-          if (operations.has(key)) {
-            return panelReply(interaction, "Operation already active", [
-              `Current operation: ${operations.get(key).name}`
-            ], true);
+          if (operations.has(guild.id)) {
+            return panelReply(
+              interaction,
+              "Operation already active",
+              [`Current operation: ${operations.get(guild.id).name}`],
+              true
+            );
           }
 
-          operations.set(key, { name, started: Date.now(), leader: user.id });
+          operations.set(guild.id, {
+            name,
+            leader: user.id,
+            started: Date.now()
+          });
 
           return panelReply(interaction, "Operation started", [
             `Name: ${name}`,
@@ -399,15 +433,18 @@ client.on("interactionCreate", async interaction => {
         }
 
         if (action === "end") {
-          const operation = operations.get(key);
+          const operation = operations.get(guild.id);
 
           if (!operation) {
-            return panelReply(interaction, "No active operation", [
-              "There is no operation to end."
-            ], true);
+            return panelReply(
+              interaction,
+              "No active operation",
+              ["There is no operation to end."],
+              true
+            );
           }
 
-          operations.delete(key);
+          operations.delete(guild.id);
 
           return panelReply(interaction, "Operation ended", [
             `Name: ${operation.name}`,
@@ -415,7 +452,7 @@ client.on("interactionCreate", async interaction => {
           ]);
         }
 
-        const operation = operations.get(key);
+        const operation = operations.get(guild.id);
 
         return panelReply(interaction, "Operation status", [
           operation
@@ -436,8 +473,23 @@ client.on("interactionCreate", async interaction => {
       case "warn": {
         const target = interaction.options.getUser("user");
         const reason = interaction.options.getString("reason");
+        const key = `${guild.id}:${target.id}`;
 
-        addWarning(guild.id, target.id, reason, user.id);
+        if (!warnings.has(key)) warnings.set(key, []);
+
+        warnings.get(key).push({
+          reason,
+          moderatorId: user.id,
+          date: Date.now()
+        });
+
+        recordAction(
+          guild.id,
+          target.id,
+          "Warning",
+          reason,
+          user.id
+        );
 
         return panelReply(interaction, "Warning recorded", [
           `Member: ${target}`,
@@ -452,9 +504,15 @@ client.on("interactionCreate", async interaction => {
         const reason = interaction.options.getString("reason");
         const member = await guild.members.fetch(target.id);
 
-        await member.timeout(minutes * 60 * 1000, reason);
+        await member.timeout(minutes * 60000, reason);
 
-        logAction(guild.id, target.id, "Timeout", reason, user.id);
+        recordAction(
+          guild.id,
+          target.id,
+          "Timeout",
+          reason,
+          user.id
+        );
 
         return panelReply(interaction, "Member timed out", [
           `Member: ${target}`,
@@ -470,7 +528,14 @@ client.on("interactionCreate", async interaction => {
         const member = await guild.members.fetch(target.id);
 
         await member.kick(reason);
-        logAction(guild.id, target.id, "Kick", reason, user.id);
+
+        recordAction(
+          guild.id,
+          target.id,
+          "Kick",
+          reason,
+          user.id
+        );
 
         return panelReply(interaction, "Member kicked", [
           `Member: ${target.tag}`,
@@ -484,7 +549,14 @@ client.on("interactionCreate", async interaction => {
         const reason = interaction.options.getString("reason");
 
         await guild.members.ban(target.id, { reason });
-        logAction(guild.id, target.id, "Ban", reason, user.id);
+
+        recordAction(
+          guild.id,
+          target.id,
+          "Ban",
+          reason,
+          user.id
+        );
 
         return panelReply(interaction, "Member banned", [
           `Member: ${target.tag}`,
@@ -496,13 +568,19 @@ client.on("interactionCreate", async interaction => {
       case "purge": {
         const amount = interaction.options.getInteger("amount");
 
-        if (!interaction.channel || !interaction.channel.isTextBased()) {
-          return panelReply(interaction, "Cannot purge messages", [
-            "This command requires a text channel."
-          ], true);
+        if (!interaction.channel?.isTextBased()) {
+          return panelReply(
+            interaction,
+            "Cannot purge messages",
+            ["This command requires a text channel."],
+            true
+          );
         }
 
-        const deleted = await interaction.channel.bulkDelete(amount, true);
+        const deleted = await interaction.channel.bulkDelete(
+          amount,
+          true
+        );
 
         return panelReply(interaction, "Messages deleted", [
           `Deleted ${deleted.size} messages.`,
@@ -530,16 +608,15 @@ client.on("interactionCreate", async interaction => {
           .filter(record => record.userId === target.id)
           .slice(-10);
 
-        const warned = warnings.get(`${guild.id}:${target.id}`) || [];
-
         const lines = records.map(record =>
-          `**${record.action}** — ${record.reason}\nModerator: <@${record.moderatorId}> · <t:${Math.floor(new Date(record.date).getTime() / 1000)}:R>`
+          `**${record.action}** — ${record.reason}\nModerator: <@${record.moderatorId}> · <t:${Math.floor(record.date / 1000)}:R>`
         );
 
         return panelReply(interaction, "Moderation records", [
           `Member: ${target}`,
-          `Recorded warnings this session: ${warned.length}`,
-          ...(lines.length ? lines : ["No moderation records found during this bot session."])
+          ...(lines.length
+            ? lines
+            : ["No moderation records found during this session."])
         ], true);
       }
 
@@ -553,17 +630,17 @@ client.on("interactionCreate", async interaction => {
       }
     }
   } catch (error) {
-    console.error(`/${commandName} failed:`, error);
+    console.error(`Command /${interaction.commandName} failed:`, error);
 
-    const message = {
+    const response = {
       content: "The command failed. Check the bot console and permissions.",
       flags: MessageFlags.Ephemeral
     };
 
     if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(message).catch(() => {});
+      await interaction.followUp(response).catch(() => {});
     } else {
-      await interaction.reply(message).catch(() => {});
+      await interaction.reply(response).catch(() => {});
     }
   }
 });
