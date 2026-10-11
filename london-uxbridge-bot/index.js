@@ -20,9 +20,9 @@ const {
 const fs = require("fs");
 const path = require("path");
 
-// =====================================
+// ==========================================
 // CONFIGURATION
-// =====================================
+// ==========================================
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
@@ -44,9 +44,9 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds],
 });
 
-// =====================================
+// ==========================================
 // DATA STORAGE
-// =====================================
+// ==========================================
 
 const dataDirectory = path.join(__dirname, "data");
 const dataFile = path.join(dataDirectory, "bot-data.json");
@@ -69,7 +69,7 @@ function loadData() {
       };
     }
   } catch (error) {
-    console.error("Could not load saved data:", error);
+    console.error("Could not load bot data:", error);
   }
 
   return {
@@ -89,14 +89,14 @@ function saveData() {
       JSON.stringify(data, null, 2)
     );
   } catch (error) {
-    console.error("Could not save data:", error);
+    console.error("Could not save bot data:", error);
   }
 }
 
-// =====================================
-// COMPONENTS V2
-// No accent colours or coloured embeds.
-// =====================================
+// ==========================================
+// COMPONENTS V2 MESSAGE BUILDER
+// NO COLOURS OR COLOURED ACCENTS
+// ==========================================
 
 function makeV2(title, description, options = {}) {
   const container = new ContainerBuilder();
@@ -175,9 +175,9 @@ async function sendV2(
   });
 }
 
-// =====================================
-// MODERATION LOG STORAGE
-// =====================================
+// ==========================================
+// MODERATION LOGS
+// ==========================================
 
 function addModlog(guildId, entry) {
   if (!data.modlogs[guildId]) {
@@ -195,9 +195,9 @@ function addModlog(guildId, entry) {
   saveData();
 }
 
-// =====================================
+// ==========================================
 // AUTOMATIC SHIFT / OPERATION ENDINGS
-// =====================================
+// ==========================================
 
 function clearTimer(key) {
   const timer = activeTimers.get(key);
@@ -212,18 +212,13 @@ function scheduleAutomaticEnd(type, record) {
   const key = `${type}:${record.guildId}`;
   clearTimer(key);
 
-  const delay = Math.max(
-    0,
-    record.endsAt - Date.now()
-  );
+  const delay = Math.max(0, record.endsAt - Date.now());
 
   const timer = setTimeout(async () => {
     activeTimers.delete(key);
 
     const collection =
-      type === "shift"
-        ? data.shifts
-        : data.operations;
+      type === "shift" ? data.shifts : data.operations;
 
     const current = collection[record.guildId];
 
@@ -236,7 +231,7 @@ function scheduleAutomaticEnd(type, record) {
         record.channelId
       );
 
-      if (channel?.isTextBased()) {
+      if (channel?.isTextBased() && channel.send) {
         if (type === "shift") {
           await sendV2(
             channel,
@@ -311,10 +306,10 @@ function scheduleAutomaticEnd(type, record) {
   activeTimers.set(key, timer);
 }
 
-// =====================================
+// ==========================================
 // SLASH COMMAND DEFINITIONS
-// There is deliberately NO /setup command.
-// =====================================
+// NO /setup COMMAND
+// ==========================================
 
 const commands = [
   new SlashCommandBuilder()
@@ -323,15 +318,15 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("information")
-    .setDescription("View detailed bot and server information."),
+    .setDescription("View community information and rules."),
 
   new SlashCommandBuilder()
     .setName("rules")
-    .setDescription("View the server rules."),
+    .setDescription("View the community rules."),
 
   new SlashCommandBuilder()
     .setName("help")
-    .setDescription("Visit the bot's support server."),
+    .setDescription("Visit the bot support server."),
 
   new SlashCommandBuilder()
     .setName("userinfo")
@@ -387,7 +382,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("warn")
-    .setDescription("Warn a member.")
+    .setDescription("Record a warning for a member.")
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ModerateMembers
     )
@@ -433,7 +428,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("kick")
-    .setDescription("Kick a member.")
+    .setDescription("Kick a member from the server.")
     .setDefaultMemberPermissions(
       PermissionFlagsBits.KickMembers
     )
@@ -452,7 +447,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("ban")
-    .setDescription("Ban a member.")
+    .setDescription("Ban a member from the server.")
     .setDefaultMemberPermissions(
       PermissionFlagsBits.BanMembers
     )
@@ -471,14 +466,14 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("purge")
-    .setDescription("Delete messages from this channel.")
+    .setDescription("Delete recent messages in this channel.")
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageMessages
     )
     .addIntegerOption(option =>
       option
         .setName("amount")
-        .setDescription("Number of messages to delete, from 1 to 100.")
+        .setDescription("Number of messages to delete (1–100).")
         .setMinValue(1)
         .setMaxValue(100)
         .setRequired(true)
@@ -511,13 +506,15 @@ const commands = [
     ),
 ].map(command => command.toJSON());
 
-// =====================================
-// REGISTER COMMANDS ON STARTUP
-// =====================================
+// ==========================================
+// REGISTER COMMANDS WHEN BOT STARTS
+// ==========================================
 
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
-  console.log(`Serving ${client.guilds.cache.size} server(s).`);
+  console.log(
+    `Serving ${client.guilds.cache.size} server(s).`
+  );
 
   try {
     console.log("Registering slash commands...");
@@ -529,12 +526,13 @@ client.once("ready", async () => {
       { body: commands }
     );
 
-    console.log(`Registered ${commands.length} slash commands.`);
+    console.log(
+      `Successfully registered ${commands.length} slash commands.`
+    );
   } catch (error) {
     console.error("Slash command registration failed:", error);
   }
 
-  // Restore active timers after a restart.
   for (const record of Object.values(data.shifts)) {
     scheduleAutomaticEnd("shift", record);
   }
@@ -544,9 +542,9 @@ client.once("ready", async () => {
   }
 });
 
-// =====================================
-// COMMAND HANDLER
-// =====================================
+// ==========================================
+// INTERACTION HANDLER
+// ==========================================
 
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
@@ -556,98 +554,64 @@ client.on("interactionCreate", async interaction => {
   const user = interaction.user;
 
   try {
-    // ---------------------------------
+    // --------------------------------------
     // PING
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "ping") {
       return replyV2(
         interaction,
         "Pong!",
-        `The bot is online.\n**WebSocket ping:** ${client.ws.ping} ms`,
+        `London, Uxbridge is online.\n**WebSocket latency:** ${client.ws.ping} ms`,
         { footer: BRAND }
       );
     }
 
-    // ---------------------------------
-    // INFORMATION
-    // ---------------------------------
+    // --------------------------------------
+    // COMMUNITY INFORMATION & RULES
+    // --------------------------------------
 
     if (command === "information") {
-      if (!guild) {
-        return replyV2(
-          interaction,
-          "London, Uxbridge — Information",
-          "Use this command inside a server.",
-          { ephemeral: true }
-        );
-      }
-
-      const owner = await guild.fetchOwner().catch(() => null);
-      const created = Math.floor(
-        guild.createdTimestamp / 1000
-      );
-
       return replyV2(
         interaction,
-        "London, Uxbridge — Information",
-        "Welcome to the London, Uxbridge information centre. This page provides an overview of the server, the bot, its features and its available commands.",
+        "Community Information & Rules",
+        "**About Us**\n\n" +
+          "> Welcome to London, Uxbridge, a British Roblox roleplay community based in West London. Our aim is to provide realistic, enjoyable and organised roleplay for civilians, emergency services, public services and military personnel.",
         {
           fields: [
             {
-              name: "Server Details",
+              name: "Departments",
               value:
-                `**Server name:** ${guild.name}\n` +
-                `**Server ID:** ${guild.id}\n` +
-                `**Server owner:** ${owner ? `<@${owner.id}>` : "Unavailable"}\n` +
-                `**Created:** <t:${created}:F>\n` +
-                `**Members:** ${guild.memberCount}`,
+                "> • Metropolitan Police Service (MET)\n" +
+                "> • London Fire Brigade (LFB)\n" +
+                "> • London Ambulance Service (LAS)\n" +
+                "> • British Transport Police (BTP)\n" +
+                "> • British Army",
             },
             {
-              name: "About the Bot",
+              name: "Community Rules",
               value:
-                "London, Uxbridge provides staff operation announcements, shift tracking, training announcements and moderation tools. It uses Discord slash commands and Components V2 messages.",
+                "> **1. Respect Everyone** — Harassment, bullying and discrimination are prohibited.\n\n" +
+                "> **2. Follow Staff Instructions** — Treat staff respectfully and follow reasonable instructions.\n\n" +
+                "> **3. No RDM or VDM** — Do not attack players or use vehicles to harm them without a valid roleplay reason.\n\n" +
+                "> **4. No Fail Roleplay** — Keep actions realistic and respect roleplay scenarios.\n\n" +
+                "> **5. No Metagaming or Powergaming** — Do not misuse out-of-character information or force actions on others.\n\n" +
+                "> **6. No Exploiting** — Cheating, hacking and exploiting glitches are prohibited.\n\n" +
+                "> **7. No Abuse of Authority** — Department members must act within their roleplay powers.\n\n" +
+                "> **8. No Spam or Advertising** — Use the correct channels and avoid unwanted promotions.\n\n" +
+                "> **9. No Impersonation** — Do not falsely claim staff positions, ranks or qualifications.\n\n" +
+                "> **10. No Unauthorised Operations** — Military operations and organised events must have an authorised host.",
             },
             {
-              name: "Staff Operations",
+              name: "Moderation",
               value:
-                "`/staff-shift` — Start a staff shift lasting one hour.\n" +
-                "`/military-operation` — Start a named operation lasting one hour.\n" +
-                "`/training-session` — Announce a training session.",
+                "> Breaking the rules may result in a warning, removal from a session, timeout or ban, depending on the severity of the incident.",
             },
             {
-              name: "Moderation Commands",
+              name: "Disclaimer",
               value:
-                "`/warn` — Issue a warning record.\n" +
-                "`/timeout` — Temporarily restrict a member.\n" +
-                "`/kick` — Remove a member from the server.\n" +
-                "`/ban` — Ban a member from the server.\n" +
-                "`/purge` — Delete recent messages.\n" +
-                "`/modlogs` — View recent records created by this bot.",
-            },
-            {
-              name: "General Commands",
-              value:
-                "`/ping` — Check bot responsiveness.\n" +
-                "`/rules` — View the server rules.\n" +
-                "`/userinfo` — View a member's account and server information.\n" +
-                "`/help` — Open the support server link.\n" +
-                "`/announce` — Publish an announcement.",
-            },
-            {
-              name: "Automatic Features",
-              value:
-                "Staff shifts and military operations are scheduled to end after one hour. The bot posts an ending notice in the channel where the session was started.",
-            },
-            {
-              name: "Permissions and Responsible Use",
-              value:
-                "Moderation commands require the relevant Discord permissions. The bot also needs the appropriate server and channel permissions to carry out actions and send messages.",
-            },
-            {
-              name: "Support",
-              value:
-                `For help, use \`/help\` or visit the [London, Uxbridge support server](${SUPPORT_URL}).`,
+                "> London, Uxbridge is a fictional Roblox roleplay community and is not affiliated with the UK Government, British Army or any real-world emergency service.\n\n" +
+                "> By remaining in the server, members agree to follow these rules.",
             },
           ],
           footer: BRAND,
@@ -655,56 +619,57 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // RULES
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "rules") {
       return replyV2(
         interaction,
-        "Server Rules",
-        "Please follow the rules established by the server's leadership.",
+        "Community Rules",
+        "All members are expected to follow the London, Uxbridge community rules.",
         {
           fields: [
             {
-              name: "1. Respect",
-              value: "Treat all members respectfully. Harassment, bullying and personal attacks are not acceptable.",
+              name: "Respect and Conduct",
+              value:
+                "Treat everyone respectfully. Harassment, bullying and discrimination are prohibited. Follow reasonable instructions from authorised staff.",
             },
             {
-              name: "2. Follow Staff Instructions",
-              value: "Follow reasonable instructions from authorised staff and raise concerns through the appropriate channels.",
+              name: "Roleplay Standards",
+              value:
+                "No RDM or VDM, fail roleplay, metagaming or powergaming. Keep scenarios realistic and respect other players' roleplay.",
             },
             {
-              name: "3. Keep Channels Appropriate",
-              value: "Use channels for their intended purposes and avoid spam or disruptive messages.",
+              name: "Fair Play",
+              value:
+                "Cheating, hacking, exploiting glitches, spam, unwanted advertising and impersonation are prohibited.",
             },
             {
-              name: "4. No Exploiting or Disruption",
-              value: "Do not deliberately disrupt server activities, exploit bot features or misuse commands.",
+              name: "Departments and Operations",
+              value:
+                "Department members must act within their roleplay powers. Military operations and organised events must have an authorised host.",
             },
             {
-              name: "5. Follow Discord's Rules",
-              value: "You must follow Discord's Terms of Service and Community Guidelines.",
-            },
-            {
-              name: "6. Staff Decisions",
-              value: "Moderation actions may be taken when rules are broken. Contact the appropriate staff member if you need to appeal a decision.",
+              name: "Moderation",
+              value:
+                "Rule-breaking may result in a warning, removal from a session, timeout or ban depending on the severity of the incident.",
             },
           ],
-          footer: "Please also follow any additional rules posted by the server owner.",
+          footer: "Use /information to read the full community rules and disclaimer.",
         }
       );
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // HELP
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "help") {
       return replyV2(
         interaction,
         "London, Uxbridge Support",
-        "Need assistance, have a question or need help with the bot? Join the support server using the button below.",
+        "Need assistance with London, Uxbridge? Join the support server using the button below.",
         {
           supportButton: true,
           footer: BRAND,
@@ -712,9 +677,9 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // USER INFO
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "userinfo") {
       if (!guild) {
@@ -748,7 +713,7 @@ client.on("interactionCreate", async interaction => {
         {
           fields: [
             {
-              name: "Account",
+              name: "Account Information",
               value:
                 `**Username:** ${target.username}\n` +
                 `**User ID:** ${target.id}\n` +
@@ -758,7 +723,7 @@ client.on("interactionCreate", async interaction => {
             {
               name: "Server Membership",
               value:
-                `**Member:** ${member ? "Yes" : "Not found"}\n` +
+                `**Member found:** ${member ? "Yes" : "No"}\n` +
                 `**Joined server:** ${joined ? `<t:${joined}:F>` : "Unavailable"}\n` +
                 `**Nickname:** ${member?.nickname || "None"}`,
             },
@@ -768,9 +733,9 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // STAFF SHIFT
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "staff-shift") {
       if (!guild) {
@@ -786,7 +751,7 @@ client.on("interactionCreate", async interaction => {
         return replyV2(
           interaction,
           "Staff Shift Already Active",
-          "A staff shift is already active in this server. Wait for it to finish before starting another.",
+          "A staff shift is already active in this server. Wait until it ends before starting another.",
           { ephemeral: true }
         );
       }
@@ -814,7 +779,7 @@ client.on("interactionCreate", async interaction => {
         await replyV2(
           interaction,
           "Staff Shift Started",
-          "A staff shift has started and is scheduled to end automatically in one hour.",
+          "A staff shift has started and will end automatically in one hour.",
           {
             fields: [
               {
@@ -827,7 +792,9 @@ client.on("interactionCreate", async interaction => {
               },
               {
                 name: "Scheduled End",
-                value: `<t:${Math.floor(endsAt / 1000)}:F>\n<t:${Math.floor(endsAt / 1000)}:R>`,
+                value:
+                  `<t:${Math.floor(endsAt / 1000)}:F>\n` +
+                  `<t:${Math.floor(endsAt / 1000)}:R>`,
               },
               {
                 name: "Duration",
@@ -852,9 +819,9 @@ client.on("interactionCreate", async interaction => {
       return;
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // MILITARY OPERATION
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "military-operation") {
       if (!guild) {
@@ -870,7 +837,7 @@ client.on("interactionCreate", async interaction => {
         return replyV2(
           interaction,
           "Operation Already Active",
-          "A military operation is already active in this server. Wait for it to finish before starting another.",
+          "A military operation is already active in this server. Wait until it ends before starting another.",
           { ephemeral: true }
         );
       }
@@ -900,7 +867,7 @@ client.on("interactionCreate", async interaction => {
         await replyV2(
           interaction,
           "Military Operation Started",
-          `The military operation **${name}** has started and is scheduled to end automatically in one hour.`,
+          `The military operation **${name}** has started and will end automatically in one hour.`,
           {
             fields: [
               {
@@ -917,7 +884,9 @@ client.on("interactionCreate", async interaction => {
               },
               {
                 name: "Scheduled End",
-                value: `<t:${Math.floor(endsAt / 1000)}:F>\n<t:${Math.floor(endsAt / 1000)}:R>`,
+                value:
+                  `<t:${Math.floor(endsAt / 1000)}:F>\n` +
+                  `<t:${Math.floor(endsAt / 1000)}:R>`,
               },
               {
                 name: "Duration",
@@ -942,9 +911,9 @@ client.on("interactionCreate", async interaction => {
       return;
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // TRAINING SESSION
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "training-session") {
       if (!guild) {
@@ -985,9 +954,9 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // WARN
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "warn") {
       if (!guild) {
@@ -1002,20 +971,14 @@ client.on("interactionCreate", async interaction => {
       const target = interaction.options.getUser("user");
       const reason = interaction.options.getString("reason");
 
-      if (target.id === user.id) {
+      if (
+        target.id === user.id ||
+        target.id === client.user.id
+      ) {
         return replyV2(
           interaction,
           "Warning Failed",
-          "You cannot warn yourself.",
-          { ephemeral: true }
-        );
-      }
-
-      if (target.id === client.user.id) {
-        return replyV2(
-          interaction,
-          "Warning Failed",
-          "You cannot warn the bot.",
+          "You cannot warn yourself or the bot.",
           { ephemeral: true }
         );
       }
@@ -1030,7 +993,7 @@ client.on("interactionCreate", async interaction => {
       return replyV2(
         interaction,
         "Warning Recorded",
-        `A warning has been recorded for ${target}.`,
+        `A warning record has been created for ${target}.`,
         {
           fields: [
             { name: "Member", value: `${target} (${target.username})` },
@@ -1042,9 +1005,9 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // TIMEOUT
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "timeout") {
       if (!guild) {
@@ -1091,7 +1054,7 @@ client.on("interactionCreate", async interaction => {
         return replyV2(
           interaction,
           "Timeout Failed",
-          "I cannot timeout this member. Check my permissions and role position.",
+          "I cannot timeout this member. Check my permissions and the bot's role position.",
           { ephemeral: true }
         );
       }
@@ -1122,9 +1085,9 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // KICK
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "kick") {
       if (!guild) {
@@ -1170,7 +1133,7 @@ client.on("interactionCreate", async interaction => {
         return replyV2(
           interaction,
           "Kick Failed",
-          "I cannot kick this member. Check my permissions and role position.",
+          "I cannot kick this member. Check the bot's permissions and role position.",
           { ephemeral: true }
         );
       }
@@ -1199,9 +1162,9 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // BAN
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "ban") {
       if (!guild) {
@@ -1254,30 +1217,21 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // PURGE
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "purge") {
-      if (!guild || !interaction.channel?.isTextBased()) {
+      if (!guild || !interaction.channel?.bulkDelete) {
         return replyV2(
           interaction,
           "Purge",
-          "Use this command in a text channel.",
+          "Use this command in a channel that supports bulk message deletion.",
           { ephemeral: true }
         );
       }
 
       const amount = interaction.options.getInteger("amount");
-
-      if (!interaction.channel.bulkDelete) {
-        return replyV2(
-          interaction,
-          "Purge Failed",
-          "This channel does not support bulk message deletion.",
-          { ephemeral: true }
-        );
-      }
 
       const deleted = await interaction.channel.bulkDelete(
         amount,
@@ -1288,20 +1242,20 @@ client.on("interactionCreate", async interaction => {
         type: "Purge",
         targetId: "N/A",
         moderatorId: user.id,
-        reason: `Deleted ${deleted.size} messages in ${interaction.channel}`,
+        reason: `Deleted ${deleted.size} messages in #${interaction.channel.name}.`,
       });
 
       return replyV2(
         interaction,
         "Messages Deleted",
-        `Deleted **${deleted.size}** recent messages. Messages older than 14 days cannot be bulk-deleted.`,
+        `Deleted **${deleted.size}** recent messages. Discord does not allow bulk deletion of messages older than 14 days.`,
         { ephemeral: true, footer: BRAND }
       );
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // MODERATION LOGS
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "modlogs") {
       if (!guild) {
@@ -1329,7 +1283,11 @@ client.on("interactionCreate", async interaction => {
 
         return (
           `**${index + 1}. ${entry.type}** — <t:${timestamp}:R>\n` +
-          `**Member:** ${entry.targetId === "N/A" ? "Not applicable" : `<@${entry.targetId}>`}\n` +
+          `**Member:** ${
+            entry.targetId === "N/A"
+              ? "Not applicable"
+              : `<@${entry.targetId}>`
+          }\n` +
           `**Moderator:** <@${entry.moderatorId}>\n` +
           `**Reason:** ${entry.reason || "No reason provided."}`
         );
@@ -1346,9 +1304,9 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ---------------------------------
+    // --------------------------------------
     // ANNOUNCE
-    // ---------------------------------
+    // --------------------------------------
 
     if (command === "announce") {
       if (!guild) {
@@ -1369,14 +1327,14 @@ client.on("interactionCreate", async interaction => {
         return replyV2(
           interaction,
           "Announcement Failed",
-          "Please select a text channel that can receive messages.",
+          "Choose a text channel where the bot can send messages.",
           { ephemeral: true }
         );
       }
 
       await sendV2(
         destination,
-        "Server Announcement",
+        "Community Announcement",
         message,
         {
           fields: [
@@ -1399,14 +1357,14 @@ client.on("interactionCreate", async interaction => {
   } catch (error) {
     console.error(`Error in /${command}:`, error);
 
-    const message =
+    const errorMessage =
       "Something went wrong while running this command. Check the bot's permissions and hosting logs.";
 
     try {
       if (interaction.deferred || interaction.replied) {
         await interaction.followUp({
           components: [
-            makeV2("Command Error", message, {
+            makeV2("Command Error", errorMessage, {
               footer: BRAND,
             }),
           ],
@@ -1419,18 +1377,21 @@ client.on("interactionCreate", async interaction => {
         await replyV2(
           interaction,
           "Command Error",
-          message,
+          errorMessage,
           { ephemeral: true }
         );
       }
     } catch (replyError) {
-      console.error("Could not send error response:", replyError);
+      console.error(
+        "Could not send error response:",
+        replyError
+      );
     }
   }
 });
 
-// =====================================
+// ==========================================
 // START BOT
-// =====================================
+// ==========================================
 
 client.login(TOKEN);
