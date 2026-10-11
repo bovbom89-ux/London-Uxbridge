@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const fs = require("fs");
@@ -11,6 +12,7 @@ const {
   SlashCommandBuilder,
   PermissionFlagsBits,
   MessageFlags,
+  ChannelType,
   ContainerBuilder,
   TextDisplayBuilder,
   SeparatorBuilder,
@@ -25,13 +27,22 @@ const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const GUILD_ID =
   process.env.DISCORD_GUILD_ID || process.env.GUILD_ID;
 
+const SUPPORT_URL = "https://discord.gg/DeuwuZFXN";
+
 if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
   throw new Error(
     "Missing DISCORD_TOKEN, DISCORD_CLIENT_ID or DISCORD_GUILD_ID."
   );
 }
 
-const SUPPORT_URL = "https://discord.gg/DeuwuZFXN";
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds],
+});
+
+// ================================================
+// DATA STORAGE
+// ================================================
+
 const DATA_DIR = path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "bot-data.json");
 
@@ -48,7 +59,6 @@ function loadData() {
 }
 
 const data = loadData();
-
 data.warnings ||= {};
 data.activeEvents ||= {};
 
@@ -56,86 +66,102 @@ function saveData() {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
-});
+// ================================================
+// COMPONENTS V2
+// No coloured accents are used.
+// ================================================
 
-// COMPONENTS V2 — no coloured accents.
-
-function text(content) {
+function makeText(content) {
   return new TextDisplayBuilder().setContent(content);
 }
 
-function separator() {
-  return new SeparatorBuilder();
-}
-
-function makePanel(title, content, components = []) {
+function makePanel(title, content, rows = []) {
   const container = new ContainerBuilder()
-    .addTextDisplayComponents(text(`# ${title}`))
-    .addSeparatorComponents(separator())
-    .addTextDisplayComponents(text(content));
+    .addTextDisplayComponents(
+      makeText(`# ${title}`)
+    )
+    .addSeparatorComponents(
+      new SeparatorBuilder()
+    )
+    .addTextDisplayComponents(
+      makeText(content)
+    );
 
-  if (components.length) {
-    container.addActionRowComponents(...components);
+  if (rows.length > 0) {
+    container.addActionRowComponents(...rows);
   }
 
   return container;
 }
 
-async function sendPanel(interaction, title, content, components = []) {
+async function replyPanel(
+  interaction,
+  title,
+  content,
+  rows = [],
+  ephemeral = false
+) {
   return interaction.reply({
-    components: [makePanel(title, content, components)],
-    flags: MessageFlags.IsComponentsV2,
+    components: [makePanel(title, content, rows)],
+    flags:
+      MessageFlags.IsComponentsV2 |
+      (ephemeral ? MessageFlags.Ephemeral : 0),
   });
 }
 
+async function sendPrivatePanel(interaction, title, content) {
+  return interaction.reply({
+    components: [makePanel(title, content)],
+    flags:
+      MessageFlags.IsComponentsV2 |
+      MessageFlags.Ephemeral,
+  });
+}
+
+// ================================================
 // COMMUNITY INFORMATION DROPDOWN
+// ================================================
 
-function informationMenu(selected = "information") {
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("uxbridge_information_menu")
-    .setPlaceholder("Choose a section...")
-    .setMinValues(1)
-    .setMaxValues(1)
-    .addOptions(
-      {
-        label: "Information",
-        description: "Learn about London, Uxbridge.",
-        value: "information",
-        default: selected === "information",
-      },
-      {
-        label: "Server Rules",
-        description: "Read our community Discord rules.",
-        value: "server_rules",
-        default: selected === "server_rules",
-      },
-      {
-        label: "Game Rules",
-        description: "Read our Roblox roleplay rules.",
-        value: "game_rules",
-        default: selected === "game_rules",
-      },
-      {
-        label: "Departments",
-        description: "View our departments and services.",
-        value: "departments",
-        default: selected === "departments",
-      },
-      {
-        label: "Disclaimer",
-        description: "Read our community disclaimer.",
-        value: "disclaimer",
-        default: selected === "disclaimer",
-      }
-    );
-
-  return new ActionRowBuilder().addComponents(menu);
+function informationMenu() {
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("uxbridge_information_menu")
+      .setPlaceholder("Choose an information section...")
+      .setMinValues(1)
+      .setMaxValues(1)
+      .addOptions(
+        {
+          label: "Information",
+          description: "About London, Uxbridge.",
+          value: "information",
+          emoji: "ℹ️",
+        },
+        {
+          label: "Server Rules",
+          description: "Read our community rules.",
+          value: "server_rules",
+          emoji: "📋",
+        },
+        {
+          label: "Game Rules",
+          description: "Read our Roblox roleplay rules.",
+          value: "game_rules",
+          emoji: "🎮",
+        },
+        {
+          label: "Departments",
+          description: "View our departments.",
+          value: "departments",
+          emoji: "🚔",
+        },
+        {
+          label: "Disclaimer",
+          description: "Read our community disclaimer.",
+          value: "disclaimer",
+          emoji: "⚠️",
+        }
+      )
+  );
 }
 
 const informationPages = {
@@ -144,7 +170,7 @@ const informationPages = {
     content:
       "Welcome to **London, Uxbridge**, a British Roblox roleplay community based in West London.\n\n" +
       "Our aim is to provide realistic, enjoyable and organised roleplay for civilians, emergency services, public services and military personnel.\n\n" +
-      "Use the dropdown menu below to explore our community rules, game rules, departments and disclaimer.",
+      "Select an option from the menu below to learn more about our community.",
   },
 
   server_rules: {
@@ -178,37 +204,37 @@ const informationPages = {
     title: "Roblox Game Rules",
     content:
       "**1. Realistic Roleplay**\n" +
-      "Keep your character's actions appropriate and realistic for the situation.\n\n" +
+      "Keep your character's actions realistic and appropriate for the situation.\n\n" +
       "**2. Value Your Life**\n" +
-      "React realistically to dangerous situations and credible threats.\n\n" +
+      "React realistically to danger and credible threats.\n\n" +
       "**3. Respect Other Players**\n" +
       "Do not deliberately disrupt another player's roleplay.\n\n" +
       "**4. No Random Attacks**\n" +
-      "Do not attack, arrest or harm players without a valid roleplay reason.\n\n" +
+      "Do not attack or harm players without a valid roleplay reason.\n\n" +
       "**5. No Unrealistic Driving**\n" +
       "Drive appropriately and do not use vehicles to disrupt roleplay.\n\n" +
       "**6. Follow Department Procedures**\n" +
-      "If you belong to a department, follow its authorised procedures and instructions.\n\n" +
+      "Follow the procedures of your authorised department.\n\n" +
       "**7. No Exploits or Cheats**\n" +
-      "Do not use scripts, cheats or glitches to gain an unfair advantage.\n\n" +
+      "Do not use cheats, scripts or glitches to gain an unfair advantage.\n\n" +
       "**8. Follow Session Hosts**\n" +
       "Follow reasonable instructions from authorised session hosts and staff.\n\n" +
-      "*These are general game rules. You can replace them with your official Roblox game rules whenever they are finalised.*",
+      "*These are suggested game rules. Update them if your Roblox game has additional official rules.*",
   },
 
   departments: {
     title: "Our Departments",
     content:
       "**Metropolitan Police Service (MET)**\n" +
-      "Responsible for policing, public safety and law enforcement roleplay.\n\n" +
+      "Policing, public safety and law enforcement roleplay.\n\n" +
       "**London Fire Brigade (LFB)**\n" +
-      "Responsible for fire and rescue roleplay.\n\n" +
+      "Fire and rescue roleplay.\n\n" +
       "**London Ambulance Service (LAS)**\n" +
-      "Responsible for medical and ambulance roleplay.\n\n" +
+      "Medical and ambulance roleplay.\n\n" +
       "**British Transport Police (BTP)**\n" +
-      "Responsible for railway policing and transport safety roleplay.\n\n" +
+      "Railway policing and transport safety roleplay.\n\n" +
       "**British Army**\n" +
-      "Responsible for authorised military roleplay and operations.",
+      "Authorised military roleplay and operations.",
   },
 
   disclaimer: {
@@ -216,11 +242,13 @@ const informationPages = {
     content:
       "London, Uxbridge is a fictional Roblox roleplay community and is not affiliated with the UK Government, British Army or any real-world emergency service.\n\n" +
       "All departments, activities and operations are intended for fictional roleplay purposes only.\n\n" +
-      "By remaining in the server, members agree to follow the community rules.",
+      "By remaining in the server, members agree to follow these rules.",
   },
 };
 
+// ================================================
 // SLASH COMMANDS
+// ================================================
 
 const commands = [
   new SlashCommandBuilder()
@@ -229,12 +257,19 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("information")
-    .setDescription("Open the community information menu.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    .setDescription("Post the community information menu.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addChannelOption(option =>
+      option
+        .setName("channel")
+        .setDescription("Channel where the menu will be posted.")
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)
+    ),
 
   new SlashCommandBuilder()
     .setName("help")
-    .setDescription("View commands and support information."),
+    .setDescription("View the bot commands and support link."),
 
   new SlashCommandBuilder()
     .setName("userinfo")
@@ -242,7 +277,7 @@ const commands = [
     .addUserOption(option =>
       option
         .setName("user")
-        .setDescription("The member to look up.")
+        .setDescription("Member to look up.")
         .setRequired(false)
     ),
 
@@ -250,50 +285,65 @@ const commands = [
     .setName("staff-shift")
     .setDescription("Start or end a staff shift.")
     .addSubcommand(sub =>
-      sub.setName("start").setDescription("Start a one-hour staff shift.")
+      sub
+        .setName("start")
+        .setDescription("Start a one-hour staff shift.")
         .addStringOption(option =>
-          option.setName("information")
+          option
+            .setName("information")
             .setDescription("Optional shift information.")
             .setRequired(false)
         )
     )
     .addSubcommand(sub =>
-      sub.setName("end").setDescription("End your active staff shift.")
+      sub
+        .setName("end")
+        .setDescription("End your active staff shift.")
     ),
 
   new SlashCommandBuilder()
     .setName("military-operation")
     .setDescription("Manage a military operation.")
     .addSubcommand(sub =>
-      sub.setName("start").setDescription("Start a one-hour operation.")
+      sub
+        .setName("start")
+        .setDescription("Start a one-hour operation.")
         .addStringOption(option =>
-          option.setName("name")
+          option
+            .setName("name")
             .setDescription("Operation name.")
             .setRequired(true)
         )
         .addStringOption(option =>
-          option.setName("information")
+          option
+            .setName("information")
             .setDescription("Optional operation information.")
             .setRequired(false)
         )
     )
     .addSubcommand(sub =>
-      sub.setName("end").setDescription("End an active operation.")
+      sub
+        .setName("end")
+        .setDescription("End your active operation.")
     )
     .addSubcommand(sub =>
-      sub.setName("status").setDescription("View the current operation.")
+      sub
+        .setName("status")
+        .setDescription("View the active operation.")
     ),
 
   new SlashCommandBuilder()
     .setName("training-session")
     .setDescription("Announce a training session.")
     .addStringOption(option =>
-      option.setName("name")
+      option
+        .setName("name")
         .setDescription("Training session name.")
         .setRequired(true)
     )
     .addStringOption(option =>
-      option.setName("information")
+      option
+        .setName("information")
         .setDescription("Additional session information.")
         .setRequired(false)
     ),
@@ -303,10 +353,16 @@ const commands = [
     .setDescription("Record a warning for a member.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
     .addUserOption(option =>
-      option.setName("user").setDescription("Member to warn.").setRequired(true)
+      option
+        .setName("user")
+        .setDescription("Member to warn.")
+        .setRequired(true)
     )
     .addStringOption(option =>
-      option.setName("reason").setDescription("Reason for the warning.").setRequired(true)
+      option
+        .setName("reason")
+        .setDescription("Reason for the warning.")
+        .setRequired(true)
     ),
 
   new SlashCommandBuilder()
@@ -314,14 +370,24 @@ const commands = [
     .setDescription("Timeout a member.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
     .addUserOption(option =>
-      option.setName("user").setDescription("Member to timeout.").setRequired(true)
+      option
+        .setName("user")
+        .setDescription("Member to timeout.")
+        .setRequired(true)
     )
     .addIntegerOption(option =>
-      option.setName("minutes").setDescription("Timeout duration in minutes.")
-        .setMinValue(1).setMaxValue(40320).setRequired(true)
+      option
+        .setName("minutes")
+        .setDescription("Duration in minutes.")
+        .setMinValue(1)
+        .setMaxValue(40320)
+        .setRequired(true)
     )
     .addStringOption(option =>
-      option.setName("reason").setDescription("Reason for the timeout.").setRequired(false)
+      option
+        .setName("reason")
+        .setDescription("Reason for the timeout.")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
@@ -329,10 +395,16 @@ const commands = [
     .setDescription("Kick a member.")
     .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
     .addUserOption(option =>
-      option.setName("user").setDescription("Member to kick.").setRequired(true)
+      option
+        .setName("user")
+        .setDescription("Member to kick.")
+        .setRequired(true)
     )
     .addStringOption(option =>
-      option.setName("reason").setDescription("Reason for the kick.").setRequired(false)
+      option
+        .setName("reason")
+        .setDescription("Reason for the kick.")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
@@ -340,10 +412,16 @@ const commands = [
     .setDescription("Ban a member.")
     .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
     .addUserOption(option =>
-      option.setName("user").setDescription("Member to ban.").setRequired(true)
+      option
+        .setName("user")
+        .setDescription("Member to ban.")
+        .setRequired(true)
     )
     .addStringOption(option =>
-      option.setName("reason").setDescription("Reason for the ban.").setRequired(false)
+      option
+        .setName("reason")
+        .setDescription("Reason for the ban.")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
@@ -351,16 +429,23 @@ const commands = [
     .setDescription("Delete recent messages.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
     .addIntegerOption(option =>
-      option.setName("amount").setDescription("Number of messages to delete.")
-        .setMinValue(1).setMaxValue(100).setRequired(true)
+      option
+        .setName("amount")
+        .setDescription("Number of messages to delete.")
+        .setMinValue(1)
+        .setMaxValue(100)
+        .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("modlogs")
-    .setDescription("View this bot's warning records.")
+    .setDescription("View warning records stored by this bot.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
     .addUserOption(option =>
-      option.setName("user").setDescription("Member whose records to view.").setRequired(true)
+      option
+        .setName("user")
+        .setDescription("Member whose records to view.")
+        .setRequired(true)
     ),
 
   new SlashCommandBuilder()
@@ -368,13 +453,20 @@ const commands = [
     .setDescription("Send a community announcement.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addStringOption(option =>
-      option.setName("message").setDescription("Announcement text.").setRequired(true)
+      option
+        .setName("message")
+        .setDescription("Announcement text.")
+        .setRequired(true)
     ),
 ];
 
-const rest = new REST({ version: "10" }).setToken(TOKEN);
+// ================================================
+// REGISTER COMMANDS ON STARTUP
+// ================================================
 
 async function registerCommands() {
+  const rest = new REST({ version: "10" }).setToken(TOKEN);
+
   console.log("Registering slash commands...");
 
   await rest.put(
@@ -385,53 +477,49 @@ async function registerCommands() {
   console.log(`Registered ${commands.length} slash commands.`);
 }
 
-// EVENT HELPERS
+// ================================================
+// STAFF SHIFTS AND MILITARY OPERATIONS
+// ================================================
+
+const activeTimers = new Map();
 
 function eventKey(guildId, type, userId) {
   return `${guildId}:${type}:${userId}`;
 }
 
-function formatDate(date) {
-  return `<t:${Math.floor(date.getTime() / 1000)}:F>`;
+function discordDate(timestamp) {
+  return `<t:${Math.floor(timestamp / 1000)}:F>`;
 }
 
-function createEventEndMessage(type, name, hostId) {
-  const label = type === "shift" ? "Staff Shift Ended" : "Military Operation Ended";
-
-  return makePanel(
-    label,
-    `**${name}**\nHosted by <@${hostId}>\n\nThe scheduled one-hour session has ended.`
-  );
-}
-
-const activeTimers = new Map();
-
-function scheduleAutomaticEnd(guildId, channelId, type, userId, name) {
-  const key = eventKey(guildId, type, userId);
-  const existing = data.activeEvents[key];
-
-  if (!existing) return;
-
+function scheduleAutomaticEnd(key, event) {
   if (activeTimers.has(key)) {
     clearTimeout(activeTimers.get(key));
   }
 
-  const delay = Math.max(0, existing.endsAt - Date.now());
+  const delay = Math.max(0, event.endsAt - Date.now());
 
   const timer = setTimeout(async () => {
     try {
-      const channel = await client.channels.fetch(channelId);
+      const channel = await client.channels.fetch(event.channelId);
 
-      if (channel && channel.isTextBased()) {
+      if (channel && channel.isTextBased() && channel.isSendable()) {
+        const title =
+          event.type === "shift"
+            ? "Staff Shift Ended"
+            : "Military Operation Ended";
+
         await channel.send({
           components: [
-            createEventEndMessage(type, name, userId),
+            makePanel(
+              title,
+              `**${event.name}**\nHosted by <@${event.userId}>\n\nThe one-hour session has ended.`
+            ),
           ],
           flags: MessageFlags.IsComponentsV2,
         });
       }
     } catch (error) {
-      console.error("Could not send automatic end message:", error);
+      console.error("Automatic event-end message failed:", error);
     }
 
     delete data.activeEvents[key];
@@ -446,62 +534,59 @@ async function startEvent(interaction, type, name, extraInfo = "") {
   const key = eventKey(interaction.guildId, type, interaction.user.id);
 
   if (data.activeEvents[key]) {
-    return sendPanel(
+    return replyPanel(
       interaction,
       "Already Active",
-      "You already have an active session of this type. End it before starting another."
+      "You already have an active session of this type. End it before starting another.",
+      [],
+      true
     );
   }
 
-  const start = new Date();
-  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const startedAt = Date.now();
+  const endsAt = startedAt + 60 * 60 * 1000;
 
-  data.activeEvents[key] = {
+  const event = {
     guildId: interaction.guildId,
     channelId: interaction.channelId,
     type,
     userId: interaction.user.id,
     name,
-    extraInfo,
-    startedAt: start.getTime(),
-    endsAt: end.getTime(),
+    startedAt,
+    endsAt,
   };
 
+  data.activeEvents[key] = event;
   saveData();
+  scheduleAutomaticEnd(key, event);
 
-  const title = type === "shift" ? "Staff Shift Started" : "Military Operation Started";
+  const title =
+    type === "shift"
+      ? "Staff Shift Started"
+      : "Military Operation Started";
 
   const content =
     `**${name}**\n\n` +
     `**Host:** ${interaction.user}\n` +
-    `**Started:** ${formatDate(start)}\n` +
-    `**Scheduled end:** ${formatDate(end)}\n` +
+    `**Started:** ${discordDate(startedAt)}\n` +
+    `**Scheduled end:** ${discordDate(endsAt)}\n` +
     `**Duration:** 1 hour` +
     (extraInfo ? `\n\n**Information:**\n${extraInfo}` : "");
 
-  await interaction.reply({
-    components: [makePanel(title, content)],
-    flags: MessageFlags.IsComponentsV2,
-  });
-
-  scheduleAutomaticEnd(
-    interaction.guildId,
-    interaction.channelId,
-    type,
-    interaction.user.id,
-    name
-  );
+  return replyPanel(interaction, title, content);
 }
 
 async function endEvent(interaction, type) {
   const key = eventKey(interaction.guildId, type, interaction.user.id);
-  const active = data.activeEvents[key];
+  const event = data.activeEvents[key];
 
-  if (!active) {
-    return sendPanel(
+  if (!event) {
+    return replyPanel(
       interaction,
       "No Active Session",
-      "You do not have an active session of this type."
+      "You do not have an active session of this type.",
+      [],
+      true
     );
   }
 
@@ -513,16 +598,21 @@ async function endEvent(interaction, type) {
   delete data.activeEvents[key];
   saveData();
 
-  const title = type === "shift" ? "Staff Shift Ended" : "Military Operation Ended";
+  const title =
+    type === "shift"
+      ? "Staff Shift Ended"
+      : "Military Operation Ended";
 
-  await sendPanel(
+  return replyPanel(
     interaction,
     title,
-    `**${active.name}**\nHosted by ${interaction.user}\n\nThe session has been ended manually.`
+    `**${event.name}**\nEnded by ${interaction.user}.\n\nThe session has been ended manually.`
   );
 }
 
-// READY
+// ================================================
+// BOT READY
+// ================================================
 
 client.once("ready", async () => {
   console.log(`London, Uxbridge bot online as ${client.user.tag}`);
@@ -530,32 +620,27 @@ client.once("ready", async () => {
   try {
     await registerCommands();
   } catch (error) {
-    console.error("Command registration failed:", error);
+    console.error("Slash command registration failed:", error);
   }
 
-  // Restore active one-hour timers after a restart.
   for (const [key, event] of Object.entries(data.activeEvents)) {
-    scheduleAutomaticEnd(
-      event.guildId,
-      event.channelId,
-      event.type,
-      event.userId,
-      event.name
-    );
+    scheduleAutomaticEnd(key, event);
   }
 });
 
+// ================================================
 // INTERACTIONS
+// ================================================
 
 client.on("interactionCreate", async interaction => {
   try {
-    // Handle the community information dropdown.
+    // Dropdown responses are private.
+    // The original public menu is never edited.
     if (
       interaction.isStringSelectMenu() &&
       interaction.customId === "uxbridge_information_menu"
     ) {
-      const selected = interaction.values[0];
-      const page = informationPages[selected];
+      const page = informationPages[interaction.values[0]];
 
       if (!page) {
         return interaction.reply({
@@ -564,46 +649,74 @@ client.on("interactionCreate", async interaction => {
         });
       }
 
-      return interaction.update({
+      return interaction.reply({
         components: [
-          makePanel(
-            page.title,
-            page.content,
-            [informationMenu(selected)]
-          ),
+          makePanel(page.title, page.content),
         ],
+        flags:
+          MessageFlags.IsComponentsV2 |
+          MessageFlags.Ephemeral,
       });
     }
 
     if (!interaction.isChatInputCommand()) return;
 
-    const { commandName } = interaction;
+    const command = interaction.commandName;
 
-    if (commandName === "ping") {
-      return sendPanel(
+    // PING
+    if (command === "ping") {
+      return replyPanel(
         interaction,
         "Pong!",
-        `Latency: **${client.ws.ping}ms**`
+        `Bot latency: **${client.ws.ping}ms**`
       );
     }
 
-    if (commandName === "information") {
-      if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    // INFORMATION — ADMIN ONLY, POST TO CHOSEN CHANNEL
+    if (command === "information") {
+      if (
+        !interaction.memberPermissions?.has(
+          PermissionFlagsBits.Administrator
+        )
+      ) {
         return interaction.reply({
           content: "Only server administrators can use this command.",
           flags: MessageFlags.Ephemeral,
         });
       }
 
-      return sendPanel(
-        interaction,
-        informationPages.information.title,
-        informationPages.information.content,
-        [informationMenu("information")]
-      );
+      const channel = interaction.options.getChannel("channel");
+
+      if (
+        !channel ||
+        !channel.isTextBased() ||
+        !channel.isSendable()
+      ) {
+        return interaction.reply({
+          content: "Please select a text channel where the bot can send messages.",
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      await channel.send({
+        components: [
+          makePanel(
+            informationPages.information.title,
+            informationPages.information.content,
+            [informationMenu()]
+          ),
+        ],
+        flags: MessageFlags.IsComponentsV2,
+      });
+
+      return interaction.reply({
+        content: `The information menu has been posted in ${channel}.`,
+        flags: MessageFlags.Ephemeral,
+      });
     }
 
-    if (commandName === "help") {
+    // HELP
+    if (command === "help") {
       const supportButton = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setLabel("Join Support Server")
@@ -611,15 +724,15 @@ client.on("interactionCreate", async interaction => {
           .setURL(SUPPORT_URL)
       );
 
-      return sendPanel(
+      return replyPanel(
         interaction,
         "London, Uxbridge Bot Help",
         "**General**\n" +
           "`/ping` — Check the bot\n" +
-          "`/information` — Community information menu (administrators only)\n" +
-          "`/help` — View commands and support\n" +
-          "`/userinfo` — Member information\n\n" +
-          "**Shifts and Operations**\n" +
+          "`/information` — Post the information menu (administrators only)\n" +
+          "`/help` — Show help\n" +
+          "`/userinfo` — View member information\n\n" +
+          "**Sessions**\n" +
           "`/staff-shift start` and `/staff-shift end`\n" +
           "`/military-operation start`, `/end` and `/status`\n" +
           "`/training-session` — Announce training\n\n" +
@@ -629,25 +742,31 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    if (commandName === "userinfo") {
-      const user = interaction.options.getUser("user") || interaction.user;
-      const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+    // USER INFO
+    if (command === "userinfo") {
+      const user =
+        interaction.options.getUser("user") || interaction.user;
 
-      const joined = member?.joinedAt
-        ? formatDate(member.joinedAt)
+      const member = await interaction.guild.members
+        .fetch(user.id)
+        .catch(() => null);
+
+      const joined = member?.joinedTimestamp
+        ? discordDate(member.joinedTimestamp)
         : "Not available";
 
-      return sendPanel(
+      return replyPanel(
         interaction,
         "User Information",
         `**Username:** ${user.username}\n` +
           `**User ID:** ${user.id}\n` +
-          `**Account created:** ${formatDate(user.createdAt)}\n` +
+          `**Account created:** ${discordDate(user.createdTimestamp)}\n` +
           `**Joined server:** ${joined}`
       );
     }
 
-    if (commandName === "staff-shift") {
+    // STAFF SHIFT
+    if (command === "staff-shift") {
       const subcommand = interaction.options.getSubcommand();
 
       if (subcommand === "start") {
@@ -662,7 +781,8 @@ client.on("interactionCreate", async interaction => {
       return endEvent(interaction, "shift");
     }
 
-    if (commandName === "military-operation") {
+    // MILITARY OPERATION
+    if (command === "military-operation") {
       const subcommand = interaction.options.getSubcommand();
 
       if (subcommand === "start") {
@@ -675,17 +795,24 @@ client.on("interactionCreate", async interaction => {
       }
 
       if (subcommand === "end") {
-        const active = Object.entries(data.activeEvents).find(
-          ([key, event]) =>
-            key.startsWith(`${interaction.guildId}:operation:`) &&
-            event.guildId === interaction.guildId
+        const entry = Object.entries(data.activeEvents).find(
+          ([, event]) =>
+            event.guildId === interaction.guildId &&
+            event.type === "operation" &&
+            event.userId === interaction.user.id
         );
 
-        if (!active) {
-          return sendPanel(interaction, "No Active Operation", "There is no active military operation.");
+        if (!entry) {
+          return replyPanel(
+            interaction,
+            "No Active Operation",
+            "You do not have an active operation to end.",
+            [],
+            true
+          );
         }
 
-        const [key, event] = active;
+        const [key, event] = entry;
 
         if (activeTimers.has(key)) {
           clearTimeout(activeTimers.get(key));
@@ -695,7 +822,7 @@ client.on("interactionCreate", async interaction => {
         delete data.activeEvents[key];
         saveData();
 
-        return sendPanel(
+        return replyPanel(
           interaction,
           "Military Operation Ended",
           `**${event.name}**\nEnded by ${interaction.user}.`
@@ -708,28 +835,31 @@ client.on("interactionCreate", async interaction => {
           event.type === "operation"
       );
 
-      return sendPanel(
+      return replyPanel(
         interaction,
         "Military Operation Status",
         active
-          ? `**Operation:** ${active.name}\n**Host:** <@${active.userId}>\n**Scheduled end:** <t:${Math.floor(active.endsAt / 1000)}:F>`
+          ? `**Operation:** ${active.name}\n**Host:** <@${active.userId}>\n**Scheduled end:** ${discordDate(active.endsAt)}`
           : "There is no active military operation."
       );
     }
 
-    if (commandName === "training-session") {
+    // TRAINING SESSION
+    if (command === "training-session") {
       const name = interaction.options.getString("name");
-      const info = interaction.options.getString("information");
+      const information =
+        interaction.options.getString("information");
 
-      return sendPanel(
+      return replyPanel(
         interaction,
         "Training Session",
         `**Session:** ${name}\n**Hosted by:** ${interaction.user}` +
-          (info ? `\n\n**Information:**\n${info}` : "")
+          (information ? `\n\n**Information:**\n${information}` : "")
       );
     }
 
-    if (commandName === "warn") {
+    // WARN
+    if (command === "warn") {
       const user = interaction.options.getUser("user");
       const reason = interaction.options.getString("reason");
 
@@ -743,69 +873,87 @@ client.on("interactionCreate", async interaction => {
 
       saveData();
 
-      return sendPanel(
+      return replyPanel(
         interaction,
         "Warning Recorded",
-        `**Member:** ${user}\n**Moderator:** ${interaction.user}\n**Reason:** ${reason}\n\nThis warning has been stored in this bot's records.`
+        `**Member:** ${user}\n` +
+          `**Moderator:** ${interaction.user}\n` +
+          `**Reason:** ${reason}\n\n` +
+          "The warning has been stored in this bot's records."
       );
     }
 
-    if (commandName === "timeout") {
+    // TIMEOUT
+    if (command === "timeout") {
       const user = interaction.options.getUser("user");
       const minutes = interaction.options.getInteger("minutes");
-      const reason = interaction.options.getString("reason") || "No reason provided";
+      const reason =
+        interaction.options.getString("reason") ||
+        "No reason provided";
 
       const member = await interaction.guild.members.fetch(user.id);
+
       await member.timeout(minutes * 60 * 1000, reason);
 
-      return sendPanel(
+      return replyPanel(
         interaction,
         "Member Timed Out",
-        `**Member:** ${user}\n**Duration:** ${minutes} minutes\n**Reason:** ${reason}`
+        `**Member:** ${user}\n` +
+          `**Duration:** ${minutes} minutes\n` +
+          `**Reason:** ${reason}`
       );
     }
 
-    if (commandName === "kick") {
+    // KICK
+    if (command === "kick") {
       const user = interaction.options.getUser("user");
-      const reason = interaction.options.getString("reason") || "No reason provided";
-      const member = await interaction.guild.members.fetch(user.id);
+      const reason =
+        interaction.options.getString("reason") ||
+        "No reason provided";
 
+      const member = await interaction.guild.members.fetch(user.id);
       await member.kick(reason);
 
-      return sendPanel(
+      return replyPanel(
         interaction,
         "Member Kicked",
         `**Member:** ${user.username}\n**Reason:** ${reason}`
       );
     }
 
-    if (commandName === "ban") {
+    // BAN
+    if (command === "ban") {
       const user = interaction.options.getUser("user");
-      const reason = interaction.options.getString("reason") || "No reason provided";
+      const reason =
+        interaction.options.getString("reason") ||
+        "No reason provided";
 
       await interaction.guild.members.ban(user.id, { reason });
 
-      return sendPanel(
+      return replyPanel(
         interaction,
         "Member Banned",
         `**Member:** ${user.username}\n**Reason:** ${reason}`
       );
     }
 
-    if (commandName === "purge") {
+    // PURGE
+    if (command === "purge") {
       const amount = interaction.options.getInteger("amount");
 
       const deleted = await interaction.channel.bulkDelete(amount, true);
 
-      return sendPanel(
+      return replyPanel(
         interaction,
         "Messages Deleted",
-        `Deleted **${deleted.size}** messages. Messages older than 14 days cannot be bulk-deleted.`
+        `Deleted **${deleted.size}** messages.\nMessages older than 14 days cannot be bulk-deleted.`
       );
     }
 
-    if (commandName === "modlogs") {
+    // MODERATION LOGS
+    if (command === "modlogs") {
       const user = interaction.options.getUser("user");
+
       const warnings = (data.warnings[user.id] || []).filter(
         warning => warning.guildId === interaction.guildId
       );
@@ -813,23 +961,27 @@ client.on("interactionCreate", async interaction => {
       const content = warnings.length
         ? warnings
             .slice(-10)
-            .map((warning, index) =>
-              `**${index + 1}.** ${warning.reason}\nModerator: <@${warning.moderatorId}> · <t:${Math.floor(warning.date / 1000)}:R>`
+            .map(
+              (warning, index) =>
+                `**${index + 1}.** ${warning.reason}\n` +
+                `Moderator: <@${warning.moderatorId}>\n` +
+                `Date: <t:${Math.floor(warning.date / 1000)}:F>`
             )
             .join("\n\n")
         : "No warning records from this bot were found for that member.";
 
-      return sendPanel(
+      return replyPanel(
         interaction,
         `Moderation Records — ${user.username}`,
         content
       );
     }
 
-    if (commandName === "announce") {
+    // ANNOUNCEMENT
+    if (command === "announce") {
       const message = interaction.options.getString("message");
 
-      return sendPanel(
+      return replyPanel(
         interaction,
         "Community Announcement",
         message
@@ -838,17 +990,22 @@ client.on("interactionCreate", async interaction => {
   } catch (error) {
     console.error("Interaction error:", error);
 
-    const message = {
-      content: "Something went wrong while processing that command. Check the bot logs.",
+    const errorMessage = {
+      content:
+        "Something went wrong. Check the bot's hosting logs for details.",
       flags: MessageFlags.Ephemeral,
     };
 
     if (interaction.deferred || interaction.replied) {
-      await interaction.followUp(message).catch(() => {});
+      await interaction.followUp(errorMessage).catch(() => {});
     } else {
-      await interaction.reply(message).catch(() => {});
+      await interaction.reply(errorMessage).catch(() => {});
     }
   }
 });
+
+// ================================================
+// START BOT
+// ================================================
 
 client.login(TOKEN);
