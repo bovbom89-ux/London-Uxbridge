@@ -95,7 +95,6 @@ const TICKET_TYPES = {
   report: {
     label: "Report a User",
     slug: "report-a-user",
-    emoji: "🚩",
     button: "Report a User",
     description:
       "Report a member or an incident to the moderation team.",
@@ -108,7 +107,6 @@ const TICKET_TYPES = {
   appeal: {
     label: "Appeals",
     slug: "appeal",
-    emoji: "⚖️",
     button: "Submit an Appeal",
     description:
       "Request a review of a moderation action or community decision.",
@@ -121,7 +119,6 @@ const TICKET_TYPES = {
   staff: {
     label: "Staff Report",
     slug: "staff-report",
-    emoji: "🛡️",
     button: "Report a Staff Member",
     description:
       "Raise a concern about a member of the staff team privately.",
@@ -134,7 +131,6 @@ const TICKET_TYPES = {
   enquiries: {
     label: "Enquiries",
     slug: "enquiries",
-    emoji: "💬",
     button: "Open an Enquiry",
     description:
       "Ask the team a question or request help with the community.",
@@ -154,16 +150,14 @@ function container(...lines) {
 
   lines
     .filter(
-      line =>
+      (line) =>
         line !== null &&
         line !== undefined &&
-        String(line).length
+        String(line).length > 0
     )
     .forEach((line, index) => {
       if (index > 0) {
-        result.addSeparatorComponents(
-          new SeparatorBuilder()
-        );
+        result.addSeparatorComponents(new SeparatorBuilder());
       }
 
       result.addTextDisplayComponents(
@@ -178,6 +172,30 @@ function v2(...lines) {
   return {
     flags: MessageFlags.IsComponentsV2,
     components: [container(...lines)],
+  };
+}
+
+/*
+ * IMPORTANT:
+ * Components V2 requires the buttons and text to be placed
+ * together in the same container.
+ *
+ * This helper adds action rows directly to the container,
+ * rather than sending a separate message containing buttons.
+ */
+
+function v2WithRows(lines, rows = [], ephemeral = false) {
+  const panel = container(...lines);
+
+  for (const row of rows) {
+    panel.addActionRowComponents(row);
+  }
+
+  return {
+    flags:
+      MessageFlags.IsComponentsV2 |
+      (ephemeral ? MessageFlags.Ephemeral : 0),
+    components: [panel],
   };
 }
 
@@ -241,36 +259,120 @@ function makeButton(
 }
 
 function slugify(value) {
-  return String(value || "member")
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 70) || "member";
+  return (
+    String(value || "member")
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 70) || "member"
+  );
+}
+
+// ==================================================
+// TICKET LOGS
+// ONE LOG MESSAGE PER TICKET
+// ==================================================
+
+async function updateTicketLog(guild, ticket) {
+  if (!ticket.logChannelId || !ticket.logMessageId) {
+    return;
+  }
+
+  const channel = await guild.channels
+    .fetch(ticket.logChannelId)
+    .catch(() => null);
+
+  if (!channel?.isTextBased()) {
+    return;
+  }
+
+  const claimed = ticket.claimedBy
+    ? `<@${ticket.claimedBy}>`
+    : "N/A";
+
+  const status = ticket.closed ? "Closed" : "Open";
+
+  const lines = [
+    "## London, Uxbridge | Ticket Log",
+    `**Ticket number:** #${ticket.ticketNumber}`,
+    `**Ticket type:** ${
+      TICKET_TYPES[ticket.type]?.label || ticket.type
+    }`,
+    `**Opened by:** <@${ticket.userId}>`,
+    `**Ticket channel:** <#${ticket.channelId}>`,
+    `**Created:** <t:${Math.floor(ticket.createdAt / 1000)}:F>`,
+    `**Status:** ${status}`,
+    `**Claimed by:** ${claimed}`,
+    `**Escalated:** ${ticket.escalated ? "Yes" : "No"}`,
+    `**Last action:** ${ticket.lastAction || "Ticket opened"}`,
+    `**Last updated:** <t:${Math.floor(
+      (ticket.updatedAt || ticket.createdAt) / 1000
+    )}:F>`,
+  ];
+
+  if (ticket.closedBy) {
+    lines.push(`**Closed by:** <@${ticket.closedBy}>`);
+  }
+
+  const message = await channel.messages
+    .fetch(ticket.logMessageId)
+    .catch(() => null);
+
+  if (message) {
+    await message.edit(v2(...lines)).catch(console.error);
+  }
+}
+
+async function createTicketLog(guild, ticket, logsChannelId) {
+  const channel = await guild.channels
+    .fetch(logsChannelId)
+    .catch(() => null);
+
+  if (!channel?.isTextBased()) {
+    return;
+  }
+
+  ticket.logChannelId = channel.id;
+  ticket.updatedAt = Date.now();
+  ticket.lastAction = "Ticket opened";
+
+  const message = await channel
+    .send(
+      v2(
+        "## London, Uxbridge | Ticket Log",
+        `**Ticket number:** #${ticket.ticketNumber}`,
+        `**Ticket type:** ${
+          TICKET_TYPES[ticket.type]?.label || ticket.type
+        }`,
+        `**Opened by:** <@${ticket.userId}>`,
+        `**Ticket channel:** <#${ticket.channelId}>`,
+        `**Created:** <t:${Math.floor(ticket.createdAt / 1000)}:F>`,
+        "**Status:** Open",
+        "**Claimed by:** N/A",
+        "**Escalated:** No",
+        "**Last action:** Ticket opened",
+        `**Last updated:** <t:${Math.floor(ticket.createdAt / 1000)}:F>`
+      )
+    )
+    .catch((error) => {
+      console.error("Could not create ticket log:", error);
+      return null;
+    });
+
+  if (message) {
+    ticket.logMessageId = message.id;
+    saveData();
+  }
 }
 
 async function sendTicketLog(guild, ticket, text) {
-  const config = getConfig(ticket.guildId)?.[ticket.type];
+  ticket.lastAction = text;
+  ticket.updatedAt = Date.now();
 
-  if (!config?.logsChannelId) return;
+  saveData();
 
-  const channel = await guild.channels
-    .fetch(config.logsChannelId)
-    .catch(() => null);
-
-  if (!channel?.isTextBased()) return;
-
-  await channel.send(
-    v2(
-      "## 🧾 London, Uxbridge | Ticket Log",
-      text,
-      `**Ticket number:** #${ticket.ticketNumber}`,
-      `**Ticket type:** ${
-        TICKET_TYPES[ticket.type]?.label || ticket.type
-      }`,
-      `**Ticket channel:** <#${ticket.channelId}>`
-    )
-  ).catch(console.error);
+  await updateTicketLog(guild, ticket);
 }
 
 // ==================================================
@@ -303,8 +405,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("userinfo")
     .setDescription("View information about a member.")
-    .addUserOption(o =>
-      o.setName("member")
+    .addUserOption((option) =>
+      option
+        .setName("member")
         .setDescription("Member to inspect.")
         .setRequired(false)
     ),
@@ -312,41 +415,48 @@ const commands = [
   new SlashCommandBuilder()
     .setName("staff-shift")
     .setDescription("Manage staff shifts.")
-    .addSubcommand(s =>
-      s.setName("start")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("start")
         .setDescription("Start your staff shift.")
     )
-    .addSubcommand(s =>
-      s.setName("end")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("end")
         .setDescription("End your staff shift.")
     ),
 
   new SlashCommandBuilder()
     .setName("military-operation")
     .setDescription("Manage military operations.")
-    .addSubcommand(s =>
-      s.setName("start")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("start")
         .setDescription("Start an operation.")
-        .addStringOption(o =>
-          o.setName("name")
+        .addStringOption((option) =>
+          option
+            .setName("name")
             .setDescription("Operation name.")
             .setRequired(true)
         )
     )
-    .addSubcommand(s =>
-      s.setName("end")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("end")
         .setDescription("End the current operation.")
     )
-    .addSubcommand(s =>
-      s.setName("status")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("status")
         .setDescription("View operation status.")
     ),
 
   new SlashCommandBuilder()
     .setName("training-session")
     .setDescription("Announce a training session.")
-    .addStringOption(o =>
-      o.setName("details")
+    .addStringOption((option) =>
+      option
+        .setName("details")
         .setDescription("Training details.")
         .setRequired(true)
     ),
@@ -357,13 +467,15 @@ const commands = [
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ModerateMembers
     )
-    .addUserOption(o =>
-      o.setName("member")
+    .addUserOption((option) =>
+      option
+        .setName("member")
         .setDescription("Member to warn.")
         .setRequired(true)
     )
-    .addStringOption(o =>
-      o.setName("reason")
+    .addStringOption((option) =>
+      option
+        .setName("reason")
         .setDescription("Reason.")
         .setRequired(true)
     ),
@@ -374,20 +486,23 @@ const commands = [
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ModerateMembers
     )
-    .addUserOption(o =>
-      o.setName("member")
+    .addUserOption((option) =>
+      option
+        .setName("member")
         .setDescription("Member to timeout.")
         .setRequired(true)
     )
-    .addIntegerOption(o =>
-      o.setName("minutes")
+    .addIntegerOption((option) =>
+      option
+        .setName("minutes")
         .setDescription("Duration in minutes.")
         .setMinValue(1)
         .setMaxValue(40320)
         .setRequired(true)
     )
-    .addStringOption(o =>
-      o.setName("reason")
+    .addStringOption((option) =>
+      option
+        .setName("reason")
         .setDescription("Reason.")
         .setRequired(false)
     ),
@@ -398,13 +513,15 @@ const commands = [
     .setDefaultMemberPermissions(
       PermissionFlagsBits.KickMembers
     )
-    .addUserOption(o =>
-      o.setName("member")
+    .addUserOption((option) =>
+      option
+        .setName("member")
         .setDescription("Member to kick.")
         .setRequired(true)
     )
-    .addStringOption(o =>
-      o.setName("reason")
+    .addStringOption((option) =>
+      option
+        .setName("reason")
         .setDescription("Reason.")
         .setRequired(false)
     ),
@@ -415,13 +532,15 @@ const commands = [
     .setDefaultMemberPermissions(
       PermissionFlagsBits.BanMembers
     )
-    .addUserOption(o =>
-      o.setName("member")
+    .addUserOption((option) =>
+      option
+        .setName("member")
         .setDescription("Member to ban.")
         .setRequired(true)
     )
-    .addStringOption(o =>
-      o.setName("reason")
+    .addStringOption((option) =>
+      option
+        .setName("reason")
         .setDescription("Reason.")
         .setRequired(false)
     ),
@@ -432,8 +551,9 @@ const commands = [
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageMessages
     )
-    .addIntegerOption(o =>
-      o.setName("amount")
+    .addIntegerOption((option) =>
+      option
+        .setName("amount")
         .setDescription("Number of messages to delete.")
         .setMinValue(1)
         .setMaxValue(100)
@@ -446,8 +566,9 @@ const commands = [
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ModerateMembers
     )
-    .addUserOption(o =>
-      o.setName("member")
+    .addUserOption((option) =>
+      option
+        .setName("member")
         .setDescription("Member to inspect.")
         .setRequired(true)
     ),
@@ -458,18 +579,20 @@ const commands = [
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageGuild
     )
-    .addChannelOption(o =>
-      o.setName("channel")
+    .addChannelOption((option) =>
+      option
+        .setName("channel")
         .setDescription("Announcement channel.")
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true)
     )
-    .addStringOption(o =>
-      o.setName("message")
+    .addStringOption((option) =>
+      option
+        .setName("message")
         .setDescription("Announcement text.")
         .setRequired(true)
     ),
-].map(command => command.toJSON());
+].map((command) => command.toJSON());
 
 // ==================================================
 // REGISTER COMMANDS GLOBALLY
@@ -498,11 +621,11 @@ client.once("ready", async () => {
 // INTERACTIONS
 // ==================================================
 
-client.on("interactionCreate", async interaction => {
+client.on("interactionCreate", async (interaction) => {
   try {
-    // ==================================================
+    // --------------------------------------------------
     // SLASH COMMANDS
-    // ==================================================
+    // --------------------------------------------------
 
     if (interaction.isChatInputCommand()) {
       if (!interaction.guild) {
@@ -519,7 +642,7 @@ client.on("interactionCreate", async interaction => {
       if (name === "ping") {
         return privateReply(
           interaction,
-          "## 🟢 Pong!",
+          "## Pong",
           "London, Uxbridge is online and responding."
         );
       }
@@ -528,18 +651,18 @@ client.on("interactionCreate", async interaction => {
         return privateReply(
           interaction,
           "## London, Uxbridge | Command Centre",
-          "**🎫 Tickets:** `/ticket`",
-          "**ℹ️ Community:** `/information`, `/help`, `/ping`, `/userinfo`",
-          "**🧑‍💼 Staff:** `/staff-shift`, `/training-session`",
-          "**🚨 Operations:** `/military-operation`",
-          "**🛡️ Moderation:** `/warn`, `/timeout`, `/kick`, `/ban`, `/purge`, `/modlogs`, `/announce`",
+          "**Tickets:** `/ticket`",
+          "**Community:** `/information`, `/help`, `/ping`, `/userinfo`",
+          "**Staff:** `/staff-shift`, `/training-session`",
+          "**Operations:** `/military-operation`",
+          "**Moderation:** `/warn`, `/timeout`, `/kick`, `/ban`, `/purge`, `/modlogs`, `/announce`",
           `[Support server](${SUPPORT_URL})`
         );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // TICKET SETUP
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "ticket") {
         if (!isAdmin(interaction)) {
@@ -563,73 +686,73 @@ client.on("interactionCreate", async interaction => {
 
         const typeMenu = new StringSelectMenuBuilder()
           .setCustomId("ticket_setup_type")
-          .setPlaceholder("1 · Choose a ticket panel type")
+          .setPlaceholder("1. Choose a ticket panel type")
           .addOptions(
-            ...Object.entries(TICKET_TYPES).map(
-              ([value, type]) => ({
-                label: type.label,
-                value,
-                description: type.description.slice(0, 100),
-                emoji: type.emoji,
-              })
-            )
+            ...Object.entries(TICKET_TYPES).map(([value, type]) => ({
+              label: type.label,
+              value,
+              description: type.description.slice(0, 100),
+            }))
           );
 
         const panelMenu = new ChannelSelectMenuBuilder()
           .setCustomId("ticket_setup_panel_channel")
-          .setPlaceholder("2 · Choose the panel posting channel")
+          .setPlaceholder("2. Choose the panel channel")
           .setChannelTypes(ChannelType.GuildText)
           .setMinValues(1)
           .setMaxValues(1);
 
         const categoryMenu = new ChannelSelectMenuBuilder()
           .setCustomId("ticket_setup_category")
-          .setPlaceholder("3 · Choose the ticket category")
+          .setPlaceholder("3. Choose the ticket category")
           .setChannelTypes(ChannelType.GuildCategory)
           .setMinValues(1)
           .setMaxValues(1);
 
         const logsMenu = new ChannelSelectMenuBuilder()
           .setCustomId("ticket_setup_logs_channel")
-          .setPlaceholder("4 · Choose the ticket logs channel")
+          .setPlaceholder("4. Choose the logs channel")
           .setChannelTypes(ChannelType.GuildText)
           .setMinValues(1)
           .setMaxValues(1);
 
-        return interaction.reply({
-          ...privateV2(
-            "## 🎫 London, Uxbridge | Ticket Setup",
-            "Configure one ticket panel at a time. Nothing is published until you press **Confirm Setup**.",
-            "**1 — Panel type** · Choose Report a User, Appeals, Staff Report or Enquiries.",
-            "**2 — Panel channel** · Where members will see the panel.",
-            "**3 — Ticket category** · Where new private ticket channels will be created.",
-            "**4 — Logs channel** · Where ticket actions will be recorded.",
-            "**5 — Confirm** · Check your choices, then publish the panel. Run `/ticket` again to configure another panel type."
-          ),
-          components: [
-            new ActionRowBuilder().addComponents(typeMenu),
-            new ActionRowBuilder().addComponents(panelMenu),
-            new ActionRowBuilder().addComponents(categoryMenu),
-            new ActionRowBuilder().addComponents(logsMenu),
-            new ActionRowBuilder().addComponents(
-              makeButton(
-                "ticket_setup_confirm",
-                "Confirm Setup",
-                ButtonStyle.Success
+        return interaction.reply(
+          v2WithRows(
+            [
+              "## London, Uxbridge | Ticket Setup",
+              "Configure one ticket panel at a time. Nothing is published until you press **Confirm Setup**.",
+              "**1 — Panel type:** Choose Report a User, Appeals, Staff Report or Enquiries.",
+              "**2 — Panel channel:** Where members will see the panel.",
+              "**3 — Ticket category:** Where new private ticket channels will be created.",
+              "**4 — Logs channel:** Where ticket activity will be recorded.",
+              "**5 — Confirm:** Once all four choices are selected, press Confirm Setup to publish the panel.",
+            ],
+            [
+              new ActionRowBuilder().addComponents(typeMenu),
+              new ActionRowBuilder().addComponents(panelMenu),
+              new ActionRowBuilder().addComponents(categoryMenu),
+              new ActionRowBuilder().addComponents(logsMenu),
+              new ActionRowBuilder().addComponents(
+                makeButton(
+                  "ticket_setup_confirm",
+                  "Confirm Setup",
+                  ButtonStyle.Success
+                ),
+                makeButton(
+                  "ticket_setup_cancel",
+                  "Cancel",
+                  ButtonStyle.Danger
+                )
               ),
-              makeButton(
-                "ticket_setup_cancel",
-                "Cancel",
-                ButtonStyle.Danger
-              )
-            ),
-          ],
-        });
+            ],
+            true
+          )
+        );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // INFORMATION PANEL
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "information") {
         if (!isAdmin(interaction)) {
@@ -643,43 +766,23 @@ client.on("interactionCreate", async interaction => {
           .setCustomId("community_information")
           .setPlaceholder("Choose an information section")
           .addOptions(
-            {
-              label: "Information",
-              value: "information",
-              emoji: "ℹ️",
-            },
-            {
-              label: "Server Rules",
-              value: "server_rules",
-              emoji: "📜",
-            },
-            {
-              label: "Game Rules",
-              value: "game_rules",
-              emoji: "🎮",
-            },
-            {
-              label: "Departments",
-              value: "departments",
-              emoji: "🏢",
-            },
-            {
-              label: "Disclaimer",
-              value: "disclaimer",
-              emoji: "⚠️",
-            }
+            { label: "Information", value: "information" },
+            { label: "Server Rules", value: "server_rules" },
+            { label: "Game Rules", value: "game_rules" },
+            { label: "Departments", value: "departments" },
+            { label: "Disclaimer", value: "disclaimer" }
           );
 
-        await interaction.channel.send({
-          ...v2(
-            "## 🇬🇧 London, Uxbridge",
-            "Welcome to London, Uxbridge, a British Roblox roleplay community.",
-            "Choose a section from the menu below to view our information, rules and departments."
-          ),
-          components: [
-            new ActionRowBuilder().addComponents(menu),
-          ],
-        });
+        await interaction.channel.send(
+          v2WithRows(
+            [
+              "## London, Uxbridge",
+              "Welcome to London, Uxbridge, a British Roblox roleplay community.",
+              "Choose a section from the menu below to view our information, rules and departments.",
+            ],
+            [new ActionRowBuilder().addComponents(menu)]
+          )
+        );
 
         return privateReply(
           interaction,
@@ -687,9 +790,9 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // USER INFORMATION
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "userinfo") {
         const target =
@@ -701,7 +804,7 @@ client.on("interactionCreate", async interaction => {
 
         return privateReply(
           interaction,
-          "## 👤 Member Information",
+          "## Member Information",
           `**Username:** ${target.username}`,
           `**User ID:** ${target.id}`,
           `**Account created:** <t:${Math.floor(target.createdTimestamp / 1000)}:F>`,
@@ -713,9 +816,9 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // STAFF SHIFTS
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "staff-shift") {
         if (!isStaff(interaction)) {
@@ -744,7 +847,7 @@ client.on("interactionCreate", async interaction => {
 
           return privateReply(
             interaction,
-            "## 🟢 Staff Shift Started",
+            "## Staff Shift Started",
             `**Staff member:** ${user}`,
             `**Started:** <t:${Math.floor(Date.now() / 1000)}:F>`,
             "Your shift will automatically expire after one hour."
@@ -765,7 +868,7 @@ client.on("interactionCreate", async interaction => {
 
         return privateReply(
           interaction,
-          "## 🛑 Staff Shift Ended",
+          "## Staff Shift Ended",
           `**Staff member:** ${user}`,
           `**Duration:** ${Math.floor(
             (Date.now() - shift.startedAt) / 60000
@@ -773,9 +876,9 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // MILITARY OPERATIONS
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "military-operation") {
         if (!isStaff(interaction)) {
@@ -808,7 +911,7 @@ client.on("interactionCreate", async interaction => {
 
           return privateReply(
             interaction,
-            "## 🚨 Operation Started",
+            "## Operation Started",
             `**Operation:** ${operationName}`,
             `**Started by:** ${user}`,
             `**Time:** <t:${Math.floor(Date.now() / 1000)}:F>`,
@@ -831,7 +934,7 @@ client.on("interactionCreate", async interaction => {
 
           return privateReply(
             interaction,
-            "## ✅ Operation Ended",
+            "## Operation Ended",
             `**Operation:** ${operation.name}`,
             `**Ended by:** ${user}`
           );
@@ -848,16 +951,16 @@ client.on("interactionCreate", async interaction => {
 
         return privateReply(
           interaction,
-          "## 🚨 Operation Status",
+          "## Operation Status",
           `**Operation:** ${operation.name}`,
           `**Started by:** <@${operation.startedBy}>`,
           `**Started:** <t:${Math.floor(operation.startedAt / 1000)}:R>`
         );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // TRAINING SESSION
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "training-session") {
         if (!isStaff(interaction)) {
@@ -867,12 +970,11 @@ client.on("interactionCreate", async interaction => {
           );
         }
 
-        const details =
-          interaction.options.getString("details");
+        const details = interaction.options.getString("details");
 
         await interaction.channel.send(
           v2(
-            "## 🎓 Training Session",
+            "## Training Session",
             `**Organiser:** ${user}`,
             `**Details:** ${details}`
           )
@@ -884,16 +986,13 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // WARN
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "warn") {
-        const target =
-          interaction.options.getUser("member");
-
-        const reason =
-          interaction.options.getString("reason");
+        const target = interaction.options.getUser("member");
+        const reason = interaction.options.getString("reason");
 
         data.warnings[target.id] ??= [];
 
@@ -906,33 +1005,31 @@ client.on("interactionCreate", async interaction => {
 
         saveData();
 
-        await target.send(
-          privateV2(
-            "## ⚠️ Warning Received",
-            `**Server:** ${guild.name}`,
-            `**Reason:** ${reason}`
+        await target
+          .send(
+            privateV2(
+              "## Warning Received",
+              `**Server:** ${guild.name}`,
+              `**Reason:** ${reason}`
+            )
           )
-        ).catch(() => {});
+          .catch(() => {});
 
         return privateReply(
           interaction,
-          "## ⚠️ Warning Recorded",
+          "## Warning Recorded",
           `**Member:** ${target}`,
           `**Reason:** ${reason}`
         );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // TIMEOUT
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "timeout") {
-        const target =
-          interaction.options.getMember("member");
-
-        const minutes =
-          interaction.options.getInteger("minutes");
-
+        const target = interaction.options.getMember("member");
+        const minutes = interaction.options.getInteger("minutes");
         const reason =
           interaction.options.getString("reason") ||
           "No reason provided";
@@ -948,21 +1045,19 @@ client.on("interactionCreate", async interaction => {
 
         return privateReply(
           interaction,
-          "## ⏳ Member Timed Out",
+          "## Member Timed Out",
           `**Member:** ${target.user}`,
           `**Duration:** ${minutes} minutes`,
           `**Reason:** ${reason}`
         );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // KICK
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "kick") {
-        const target =
-          interaction.options.getMember("member");
-
+        const target = interaction.options.getMember("member");
         const reason =
           interaction.options.getString("reason") ||
           "No reason provided";
@@ -978,20 +1073,18 @@ client.on("interactionCreate", async interaction => {
 
         return privateReply(
           interaction,
-          "## 👢 Member Kicked",
+          "## Member Kicked",
           `**Member:** ${target.user.tag}`,
           `**Reason:** ${reason}`
         );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // BAN
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "ban") {
-        const target =
-          interaction.options.getUser("member");
-
+        const target = interaction.options.getUser("member");
         const reason =
           interaction.options.getString("reason") ||
           "No reason provided";
@@ -1011,19 +1104,18 @@ client.on("interactionCreate", async interaction => {
 
         return privateReply(
           interaction,
-          "## 🔨 Member Banned",
+          "## Member Banned",
           `**Member:** ${target.tag}`,
           `**Reason:** ${reason}`
         );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // PURGE
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "purge") {
-        const amount =
-          interaction.options.getInteger("amount");
+        const amount = interaction.options.getInteger("amount");
 
         if (!interaction.channel?.bulkDelete) {
           return privateReply(
@@ -1032,26 +1124,28 @@ client.on("interactionCreate", async interaction => {
           );
         }
 
-        const messages =
-          await interaction.channel.bulkDelete(amount, true);
+        const messages = await interaction.channel.bulkDelete(
+          amount,
+          true
+        );
 
         return privateReply(
           interaction,
-          "## 🧹 Messages Deleted",
+          "## Messages Deleted",
           `Deleted **${messages.size}** messages. Messages older than 14 days cannot be bulk deleted.`
         );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // MODERATION LOGS
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "modlogs") {
-        const target =
-          interaction.options.getUser("member");
+        const target = interaction.options.getUser("member");
 
-        const records = (data.warnings[target.id] || [])
-          .filter(record => record.guildId === guild.id);
+        const records = (data.warnings[target.id] || []).filter(
+          (record) => record.guildId === guild.id
+        );
 
         if (!records.length) {
           return privateReply(
@@ -1062,28 +1156,31 @@ client.on("interactionCreate", async interaction => {
 
         return privateReply(
           interaction,
-          "## 📋 Moderation Records",
+          "## Moderation Records",
           `**Member:** ${target}`,
-          records.slice(-10).map((record, i) =>
-            `**${i + 1}.** ${record.reason}\nModerator: <@${record.moderatorId}> • <t:${Math.floor(record.timestamp / 1000)}:R>`
-          ).join("\n\n")
+          records
+            .slice(-10)
+            .map(
+              (record, index) =>
+                `**${index + 1}.** ${record.reason}\nModerator: <@${record.moderatorId}> · <t:${Math.floor(record.timestamp / 1000)}:R>`
+            )
+            .join("\n\n")
         );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // ANNOUNCEMENTS
-      // ==================================================
+      // --------------------------------------------------
 
       if (name === "announce") {
         const channel =
           interaction.options.getChannel("channel");
-
         const message =
           interaction.options.getString("message");
 
         await channel.send(
           v2(
-            "## 📢 London, Uxbridge Announcement",
+            "## London, Uxbridge Announcement",
             message,
             `**Posted by:** ${user}`
           )
@@ -1096,9 +1193,9 @@ client.on("interactionCreate", async interaction => {
       }
     }
 
-    // ==================================================
-    // TICKET SETUP: TYPE DROPDOWN
-    // ==================================================
+    // --------------------------------------------------
+    // TICKET SETUP TYPE MENU
+    // --------------------------------------------------
 
     if (
       interaction.isStringSelectMenu() &&
@@ -1131,9 +1228,9 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ==================================================
-    // TICKET SETUP: CHANNEL DROPDOWNS
-    // ==================================================
+    // --------------------------------------------------
+    // TICKET SETUP CHANNEL MENUS
+    // --------------------------------------------------
 
     if (
       interaction.isChannelSelectMenu() &&
@@ -1162,21 +1259,17 @@ client.on("interactionCreate", async interaction => {
       }
 
       if (
-        interaction.customId ===
-        "ticket_setup_panel_channel"
+        interaction.customId === "ticket_setup_panel_channel"
       ) {
         session.panelChannelId = interaction.values[0];
       }
 
-      if (
-        interaction.customId === "ticket_setup_category"
-      ) {
+      if (interaction.customId === "ticket_setup_category") {
         session.categoryId = interaction.values[0];
       }
 
       if (
-        interaction.customId ===
-        "ticket_setup_logs_channel"
+        interaction.customId === "ticket_setup_logs_channel"
       ) {
         session.logsChannelId = interaction.values[0];
       }
@@ -1193,9 +1286,9 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ==================================================
-    // CONFIRM / CANCEL TICKET SETUP
-    // ==================================================
+    // --------------------------------------------------
+    // CONFIRM OR CANCEL TICKET SETUP
+    // --------------------------------------------------
 
     if (
       interaction.isButton() &&
@@ -1211,9 +1304,7 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      const key =
-        `${interaction.guildId}:${interaction.user.id}`;
-
+      const key = `${interaction.guildId}:${interaction.user.id}`;
       const session = setupSessions.get(key);
 
       if (!session) {
@@ -1293,31 +1384,46 @@ client.on("interactionCreate", async interaction => {
 
       const openButton = makeButton(
         `ticket_open_${session.type}`,
-        `${type.emoji} ${type.button}`,
+        type.button,
         ButtonStyle.Primary
       );
 
       try {
-        await panelChannel.send({
-          ...v2(
-            `# ${type.emoji} ${type.label}`,
-            "**LONDON, UXBRIDGE · SUPPORT CENTRE**",
+        /*
+         * THIS IS THE MAIN FIX.
+         *
+         * The heading, description, instructions and button
+         * are all included in ONE Components V2 container.
+         * The button is not sent as a separate message.
+         */
+
+        const ticketPanel = v2WithRows(
+          [
+            `# ${type.label}`,
+            "**LONDON, UXBRIDGE | SUPPORT CENTRE**",
             type.description,
-            "━━━━━━━━━━━━━━━━━━━━━━━━",
-            `### Before opening a ticket\n${type.guidance}`,
-            "Your ticket will be private to you and the authorised support team. Please do not open duplicate tickets for the same issue.",
-            "Select the button below when you're ready."
-          ),
-          components: [
-            new ActionRowBuilder().addComponents(openButton),
+            " ",
+            "### Before opening a ticket",
+            type.guidance,
+            " ",
+            "**What happens next?**",
+            "Your ticket will be private to you and the authorised support team.",
+            "Please do not open duplicate tickets for the same issue.",
+            " ",
+            "Select the button below when you are ready.",
           ],
-        });
+          [
+            new ActionRowBuilder().addComponents(openButton),
+          ]
+        );
+
+        await panelChannel.send(ticketPanel);
       } catch (error) {
         console.error("Could not post ticket panel:", error);
 
         return privateReply(
           interaction,
-          "I could not post the panel. Check my permissions in the selected channel."
+          "I could not post the panel. Check my permissions in the selected channel and check the hosting logs."
         );
       }
 
@@ -1334,18 +1440,18 @@ client.on("interactionCreate", async interaction => {
 
       return privateReply(
         interaction,
-        "## ✅ Ticket Setup Complete",
+        "## Ticket Setup Complete",
         `**Panel:** ${type.label}`,
         `**Panel channel:** <#${panelChannel.id}>`,
         `**Ticket category:** <#${category.id}>`,
         `**Logs channel:** <#${logsChannel.id}>`,
-        "Your Components V2 ticket panel has been published. Run `/ticket` again to configure another panel type."
+        "Your ticket panel has been published. Run `/ticket` again to configure another panel type."
       );
     }
 
-    // ==================================================
+    // --------------------------------------------------
     // INFORMATION DROPDOWN
-    // ==================================================
+    // --------------------------------------------------
 
     if (
       interaction.isStringSelectMenu() &&
@@ -1353,12 +1459,12 @@ client.on("interactionCreate", async interaction => {
     ) {
       const sections = {
         information: [
-          "## 🇬🇧 About London, Uxbridge",
+          "## About London, Uxbridge",
           "A British Roblox roleplay community aiming to provide organised, enjoyable and realistic roleplay.",
         ],
 
         server_rules: [
-          "## 📜 Server Rules",
+          "## Server Rules",
           "1. Treat members respectfully.",
           "2. Do not harass, threaten or discriminate against others.",
           "3. Do not spam or disrupt channels.",
@@ -1368,7 +1474,7 @@ client.on("interactionCreate", async interaction => {
         ],
 
         game_rules: [
-          "## 🎮 Game Rules",
+          "## Game Rules",
           "1. Keep roleplay appropriate and realistic.",
           "2. Do not exploit or cheat.",
           "3. Do not disrupt other players' roleplay.",
@@ -1377,12 +1483,12 @@ client.on("interactionCreate", async interaction => {
         ],
 
         departments: [
-          "## 🏢 Departments",
+          "## Departments",
           "Information about departments, applications and requirements will be published by authorised community staff.",
         ],
 
         disclaimer: [
-          "## ⚠️ Disclaimer",
+          "## Disclaimer",
           "London, Uxbridge is an independent Roblox roleplay community. It is not affiliated with or endorsed by the real London Borough of Hillingdon, the Metropolitan Police Service, the London Fire Brigade, the NHS or any other real-world public authority.",
           "Roleplay activities are fictional and for entertainment.",
         ],
@@ -1400,9 +1506,9 @@ client.on("interactionCreate", async interaction => {
       return privateReply(interaction, ...selected);
     }
 
-    // ==================================================
-    // OPEN PRIVATE TICKETS
-    // ==================================================
+    // --------------------------------------------------
+    // OPEN A PRIVATE TICKET
+    // --------------------------------------------------
 
     if (
       interaction.isButton() &&
@@ -1411,8 +1517,10 @@ client.on("interactionCreate", async interaction => {
       const guild = interaction.guild;
       const user = interaction.user;
 
-      const typeKey =
-        interaction.customId.replace("ticket_open_", "");
+      const typeKey = interaction.customId.replace(
+        "ticket_open_",
+        ""
+      );
 
       const type = TICKET_TYPES[typeKey];
       const config = getConfig(guild.id)?.[typeKey];
@@ -1425,7 +1533,7 @@ client.on("interactionCreate", async interaction => {
       }
 
       const existing = Object.values(data.tickets).find(
-        ticket =>
+        (ticket) =>
           ticket.guildId === guild.id &&
           ticket.userId === user.id &&
           !ticket.closed
@@ -1448,7 +1556,9 @@ client.on("interactionCreate", async interaction => {
       }
 
       await interaction.deferReply({
-        flags: MessageFlags.Ephemeral,
+        flags:
+          MessageFlags.Ephemeral |
+          MessageFlags.IsComponentsV2,
       });
 
       const category = await guild.channels
@@ -1460,7 +1570,9 @@ client.on("interactionCreate", async interaction => {
         category.type !== ChannelType.GuildCategory
       ) {
         return interaction.editReply(
-          "The configured ticket category no longer exists. Ask an administrator to run `/ticket` again."
+          privateV2(
+            "The configured ticket category no longer exists. Ask an administrator to run `/ticket` again."
+          )
         );
       }
 
@@ -1475,7 +1587,7 @@ client.on("interactionCreate", async interaction => {
 
       while (
         guild.channels.cache.some(
-          channel =>
+          (channel) =>
             channel.parentId === category.id &&
             channel.name === ticketName
         )
@@ -1551,13 +1663,12 @@ client.on("interactionCreate", async interaction => {
           permissionOverwrites: overwrites,
         });
       } catch (error) {
-        console.error(
-          "Ticket channel creation failed:",
-          error
-        );
+        console.error("Ticket channel creation failed:", error);
 
         return interaction.editReply(
-          "I couldn't create the private ticket. Check my Manage Channels permission and the category permissions."
+          privateV2(
+            "I couldn't create the private ticket. Check my Manage Channels permission and the category permissions."
+          )
         );
       }
 
@@ -1570,6 +1681,8 @@ client.on("interactionCreate", async interaction => {
         createdAt: Date.now(),
         claimedBy: null,
         closed: false,
+        escalated: false,
+        lastAction: "Ticket opened",
       };
 
       data.tickets[channel.id] = ticket;
@@ -1593,49 +1706,63 @@ client.on("interactionCreate", async interaction => {
         )
       );
 
+      /*
+       * The ticket welcome text and management controls
+       * are also placed together in one Components V2 panel.
+       */
+
       await channel.send({
-        ...v2(
-          `# ${type.emoji} ${type.label}`,
-          `## Welcome, ${user.username}!`,
-          "Your private ticket is now open. A member of the support team will assist you as soon as possible.",
-          `**Ticket number:** #${ticketNumber}`,
-          "━━━━━━━━━━━━━━━━━━━━━━━━",
-          `### What happens next?\n${type.intro}`,
-          `### Please include\n${type.guidance}`,
-          "Keep all details and evidence in this channel. Please be patient while staff review your ticket.",
-          `**Ticket owner:** <@${user.id}>`
+        ...v2WithRows(
+          [
+            `# ${type.label}`,
+            `## Welcome, ${user.username}`,
+            "Your private ticket is now open. A member of the support team will assist you as soon as possible.",
+            `**Ticket number:** #${ticketNumber}`,
+            " ",
+            "### What happens next?",
+            type.intro,
+            " ",
+            "### Please include",
+            type.guidance,
+            " ",
+            "Keep all details and evidence in this channel. Please be patient while staff review your ticket.",
+            `**Ticket owner:** <@${user.id}>`,
+          ],
+          [controls]
         ),
-        components: [controls],
         allowedMentions: {
           users: [user.id],
-          roles: supportRole ? [supportRole.id] : [],
         },
       });
 
       if (supportRole) {
         await channel.send({
-          content: `<@&${supportRole.id}>`,
+          ...v2(
+            `Support team notified: <@&${supportRole.id}>`
+          ),
           allowedMentions: {
             roles: [supportRole.id],
           },
         }).catch(console.error);
       }
 
-      await sendTicketLog(
+      await createTicketLog(
         guild,
         ticket,
-        `**Action:** Ticket opened\n**Member:** <@${user.id}>\n**Channel:** <#${channel.id}>`
+        config.logsChannelId
       );
 
-      return interaction.editReply({
-        content:
-          `✅ Your ${type.label} ticket has been created! Head to your ticket at <#${channel.id}>.`,
-      });
+      return interaction.editReply(
+        privateV2(
+          `Your ${type.label} ticket has been created.`,
+          `Head to your ticket at <#${channel.id}>.`
+        )
+      );
     }
 
-    // ==================================================
-    // TICKET CONTROLS
-    // ==================================================
+    // --------------------------------------------------
+    // TICKET MANAGEMENT BUTTONS
+    // --------------------------------------------------
 
     if (
       interaction.isButton() &&
@@ -1667,7 +1794,8 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      // Claim ticket
+      // CLAIM TICKET
+
       if (interaction.customId === "ticket_claim") {
         if (ticket.closed) {
           return privateReply(
@@ -1684,11 +1812,13 @@ client.on("interactionCreate", async interaction => {
         }
 
         ticket.claimedBy = interaction.user.id;
+        ticket.updatedAt = Date.now();
+
         saveData();
 
         await interaction.channel.send(
           v2(
-            "## 🛡️ Ticket Claimed",
+            "## Ticket Claimed",
             `This ticket has been claimed by ${interaction.user}.`
           )
         );
@@ -1696,7 +1826,7 @@ client.on("interactionCreate", async interaction => {
         await sendTicketLog(
           interaction.guild,
           ticket,
-          `**Action:** Ticket claimed\n**Staff:** <@${interaction.user.id}>`
+          `Ticket claimed by ${interaction.user.tag}`
         );
 
         return privateReply(
@@ -1705,7 +1835,8 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      // Close ticket
+      // CLOSE TICKET
+
       if (interaction.customId === "ticket_close") {
         if (ticket.closed) {
           return privateReply(
@@ -1717,6 +1848,8 @@ client.on("interactionCreate", async interaction => {
         ticket.closed = true;
         ticket.closedAt = Date.now();
         ticket.closedBy = interaction.user.id;
+        ticket.updatedAt = Date.now();
+
         saveData();
 
         await interaction.channel.permissionOverwrites
@@ -1730,24 +1863,26 @@ client.on("interactionCreate", async interaction => {
           .fetch(ticket.userId)
           .catch(() => null);
 
-        await interaction.channel.setName(
-          `closed-${ticket.type}-${slugify(
-            ticketOwner?.username || "ticket"
-          )}`.slice(0, 95)
-        ).catch(console.error);
+        await interaction.channel
+          .setName(
+            `closed-${ticket.type}-${slugify(
+              ticketOwner?.username || "ticket"
+            )}`.slice(0, 95)
+          )
+          .catch(console.error);
 
         await interaction.channel.send(
           v2(
-            "## 🔒 Ticket Closed",
+            "## Ticket Closed",
             `This ticket was closed by ${interaction.user}.`,
-            "The ticket owner can no longer send messages. Staff can reopen it by editing channel permissions if needed."
+            "The ticket owner can no longer send messages. Staff can reopen it by editing the channel permissions if needed."
           )
         );
 
         await sendTicketLog(
           interaction.guild,
           ticket,
-          `**Action:** Ticket closed\n**Opened by:** <@${ticket.userId}>\n**Closed by:** <@${interaction.user.id}>\n**Channel:** <#${interaction.channelId}>`
+          `Ticket closed by ${interaction.user.tag}`
         );
 
         return privateReply(
@@ -1756,7 +1891,8 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      // Staff tools
+      // STAFF TOOLS
+
       if (interaction.customId === "ticket_modpanel") {
         const controls = new ActionRowBuilder().addComponents(
           makeButton(
@@ -1775,16 +1911,20 @@ client.on("interactionCreate", async interaction => {
           )
         );
 
-        return interaction.reply({
-          ...privateV2(
-            "## 🛠️ Ticket Staff Tools",
-            "Choose an action for this ticket."
-          ),
-          components: [controls],
-        });
+        return interaction.reply(
+          v2WithRows(
+            [
+              "## Ticket Staff Tools",
+              "Choose an action for this ticket.",
+            ],
+            [controls],
+            true
+          )
+        );
       }
 
-      // Rename ticket
+      // RENAME TICKET MODAL
+
       if (interaction.customId === "ticket_rename") {
         const modal = new ModalBuilder()
           .setCustomId("ticket_rename_modal")
@@ -1803,15 +1943,25 @@ client.on("interactionCreate", async interaction => {
         return interaction.showModal(modal);
       }
 
-      // Unclaim ticket
+      // UNCLAIM TICKET
+
       if (interaction.customId === "ticket_unclaim") {
+        if (ticket.closed) {
+          return privateReply(
+            interaction,
+            "This ticket is closed."
+          );
+        }
+
         ticket.claimedBy = null;
+        ticket.updatedAt = Date.now();
+
         saveData();
 
         await sendTicketLog(
           interaction.guild,
           ticket,
-          `**Action:** Ticket unclaimed\n**Staff:** <@${interaction.user.id}>`
+          `Ticket unclaimed by ${interaction.user.tag}`
         );
 
         return privateReply(
@@ -1820,7 +1970,8 @@ client.on("interactionCreate", async interaction => {
         );
       }
 
-      // Escalate ticket
+      // ESCALATE TICKET
+
       if (interaction.customId === "ticket_escalate") {
         const role = interaction.guild.roles.cache.get(
           ESCALATION_ROLE_ID
@@ -1842,15 +1993,22 @@ client.on("interactionCreate", async interaction => {
           }
         );
 
+        ticket.escalated = true;
+        ticket.updatedAt = Date.now();
+
+        saveData();
+
         await interaction.channel.send(
           v2(
-            "## 🚨 Ticket Escalated",
+            "## Ticket Escalated",
             `This ticket has been escalated by ${interaction.user}.`
           )
         );
 
         await interaction.channel.send({
-          content: `<@&${role.id}>`,
+          ...v2(
+            `Escalation team notified: <@&${role.id}>`
+          ),
           allowedMentions: {
             roles: [role.id],
           },
@@ -1859,7 +2017,7 @@ client.on("interactionCreate", async interaction => {
         await sendTicketLog(
           interaction.guild,
           ticket,
-          `**Action:** Ticket escalated\n**Staff:** <@${interaction.user.id}>`
+          `Ticket escalated by ${interaction.user.tag}`
         );
 
         return privateReply(
@@ -1869,9 +2027,9 @@ client.on("interactionCreate", async interaction => {
       }
     }
 
-    // ==================================================
-    // RENAME TICKET MODAL
-    // ==================================================
+    // --------------------------------------------------
+    // RENAME MODAL SUBMISSION
+    // --------------------------------------------------
 
     if (
       interaction.isModalSubmit() &&
@@ -1902,7 +2060,7 @@ client.on("interactionCreate", async interaction => {
       await sendTicketLog(
         interaction.guild,
         ticket,
-        `**Action:** Ticket renamed\n**New name:** ${newName}\n**Staff:** <@${interaction.user.id}>`
+        `Ticket renamed to ${newName} by ${interaction.user.tag}`
       );
 
       return privateReply(
@@ -1954,9 +2112,7 @@ setInterval(() => {
     }
   }
 
-  for (
-    const [guildId, operation] of Object.entries(data.operations)
-  ) {
+  for (const [guildId, operation] of Object.entries(data.operations)) {
     if (
       operation &&
       now - operation.startedAt >= 60 * 60 * 1000
@@ -1972,7 +2128,7 @@ setInterval(() => {
 }, 60 * 1000);
 
 // ==================================================
-// LOGIN
+// START BOT
 // ==================================================
 
 client.login(TOKEN);
