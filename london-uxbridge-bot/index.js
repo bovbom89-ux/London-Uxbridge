@@ -1,8 +1,8 @@
+
 require("dotenv").config();
 
-const fs = require("node:fs");
-const path = require("node:path");
-
+const fs = require("fs");
+const path = require("path");
 const {
   Client,
   GatewayIntentBits,
@@ -10,11 +10,8 @@ const {
   Routes,
   SlashCommandBuilder,
   PermissionFlagsBits,
-  MessageFlags,
   ChannelType,
-  ContainerBuilder,
-  TextDisplayBuilder,
-  SeparatorBuilder,
+  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -22,539 +19,349 @@ const {
   ChannelSelectMenuBuilder,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle,
+  TextInputStyle
 } = require("discord.js");
 
-// ==================================================
-// CONFIGURATION
-// ==================================================
+/* ==================================================
+   LONDON, UXBRIDGE — COMPLETE BOT
+================================================== */
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 
-if (!TOKEN || !CLIENT_ID) {
-  throw new Error("Missing DISCORD_TOKEN or DISCORD_CLIENT_ID.");
-}
-
 const SUPPORT_ROLE_ID = "1558934432675790888";
 const ESCALATION_ROLE_ID = "1558933872824287313";
+const TICKET_BLACKLIST_ROLE_ID = "1559232249122136136";
 const SUPPORT_URL = "https://discord.gg/DeuwuZFXN";
 
-const DATA_DIR = path.join(__dirname, "data");
-const DATA_FILE = path.join(DATA_DIR, "bot-data.json");
-
-fs.mkdirSync(DATA_DIR, { recursive: true });
-
-function loadData() {
-  try {
-    if (fs.existsSync(DATA_FILE)) {
-      return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-    }
-  } catch (error) {
-    console.error("Data loading error:", error);
-  }
-
-  return {};
-}
-
-const data = {
-  tickets: {},
-  warnings: {},
-  shifts: {},
-  operations: {},
-  ticketConfigs: {},
-  nextTicketNumber: 1,
-  ...loadData(),
-};
-
-data.tickets ??= {};
-data.warnings ??= {};
-data.shifts ??= {};
-data.operations ??= {};
-data.ticketConfigs ??= {};
-data.nextTicketNumber ??= 1;
-
-function saveData() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+if (!TOKEN || !CLIENT_ID) {
+  console.error("ERROR: DISCORD_TOKEN or DISCORD_CLIENT_ID is missing.");
+  process.exit(1);
 }
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-  ],
+    GatewayIntentBits.GuildMembers
+  ]
 });
 
-const setupSessions = new Map();
+const DATA_DIR = path.join(__dirname, "data");
+const DATA_FILE = path.join(DATA_DIR, "bot-data.json");
 
-// ==================================================
-// TICKET TYPES
-// ==================================================
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
-const TICKET_TYPES = {
-  report: {
-    label: "Report a User",
-    slug: "report-a-user",
-    button: "Report a User",
-    description:
-      "Report a member or an incident to the moderation team.",
-    intro:
-      "Use this ticket to report a user or incident. Explain what happened, include relevant dates, and attach any evidence you have.",
-    guidance:
-      "Please provide the username of the person involved, what happened, when it happened, and any screenshots or other evidence.",
-  },
+function loadData() {
+  try {
+    if (!fs.existsSync(DATA_FILE)) {
+      return {};
+    }
 
-  appeal: {
-    label: "Appeals",
-    slug: "appeal",
-    button: "Submit an Appeal",
-    description:
-      "Request a review of a moderation action or community decision.",
-    intro:
-      "Use this ticket to submit an appeal. Explain the action you are appealing and why you believe it should be reviewed.",
-    guidance:
-      "Please include the action you are appealing, when it happened, and a clear explanation of your appeal.",
-  },
+    return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  } catch (error) {
+    console.error("Could not read bot data:", error);
+    return {};
+  }
+}
 
-  staff: {
-    label: "Staff Report",
-    slug: "staff-report",
-    button: "Report a Staff Member",
-    description:
-      "Raise a concern about a member of the staff team privately.",
-    intro:
-      "Use this ticket to report a staff member. Please remain respectful and provide relevant details and evidence.",
-    guidance:
-      "Please name the staff member involved, describe the incident, and include any relevant evidence.",
-  },
-
-  enquiries: {
-    label: "Enquiries",
-    slug: "enquiries",
-    button: "Open an Enquiry",
-    description:
-      "Ask the team a question or request help with the community.",
-    intro:
-      "Use this ticket for general questions and enquiries. Explain what you need help with and the team will get back to you.",
-    guidance:
-      "Please describe your question or enquiry in as much detail as you can.",
-  },
+const data = {
+  ticketConfigs: {},
+  tickets: {},
+  blacklistedUsers: {},
+  warnings: {},
+  shifts: {},
+  operations: {},
+  ...loadData()
 };
 
-// ==================================================
-// COMPONENTS V2 HELPERS
-// ==================================================
-
-function container(...lines) {
-  const result = new ContainerBuilder();
-
-  lines
-    .filter(
-      (line) =>
-        line !== null &&
-        line !== undefined &&
-        String(line).length > 0
-    )
-    .forEach((line, index) => {
-      if (index > 0) {
-        result.addSeparatorComponents(new SeparatorBuilder());
-      }
-
-      result.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(String(line))
-      );
-    });
-
-  return result;
-}
-
-function v2(...lines) {
-  return {
-    flags: MessageFlags.IsComponentsV2,
-    components: [container(...lines)],
-  };
-}
-
-/*
- * IMPORTANT:
- * Components V2 requires the buttons and text to be placed
- * together in the same container.
- *
- * This helper adds action rows directly to the container,
- * rather than sending a separate message containing buttons.
- */
-
-function v2WithRows(lines, rows = [], ephemeral = false) {
-  const panel = container(...lines);
-
-  for (const row of rows) {
-    panel.addActionRowComponents(row);
+function saveData() {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (error) {
+    console.error("Could not save bot data:", error);
   }
-
-  return {
-    flags:
-      MessageFlags.IsComponentsV2 |
-      (ephemeral ? MessageFlags.Ephemeral : 0),
-    components: [panel],
-  };
 }
 
-function privateV2(...lines) {
-  return {
-    flags:
-      MessageFlags.IsComponentsV2 |
-      MessageFlags.Ephemeral,
-    components: [container(...lines)],
-  };
+/* ==================================================
+   GENERAL HELPERS
+================================================== */
+
+const P = PermissionFlagsBits;
+
+function embed(title, description, color = 0x3F5378) {
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title)
+    .setDescription(description)
+    .setFooter({ text: "London, Uxbridge" })
+    .setTimestamp();
 }
 
-async function privateReply(interaction, ...lines) {
-  const payload = privateV2(...lines);
-
-  if (interaction.replied || interaction.deferred) {
-    return interaction.followUp(payload);
+async function privateReply(interaction, title, description) {
+  const e = embed(title, description);
+  if (interaction.deferred || interaction.replied) {
+    return interaction.followUp({ embeds: [e], ephemeral: true });
   }
-
-  return interaction.reply(payload);
+  return interaction.reply({ embeds: [e], ephemeral: true });
 }
 
 function isAdmin(interaction) {
-  return Boolean(
-    interaction.memberPermissions?.has(
-      PermissionFlagsBits.Administrator
-    )
-  );
+  return interaction.memberPermissions?.has(P.Administrator) || false;
 }
 
-function hasSupportRole(interaction) {
-  const roles = interaction.member?.roles?.cache;
+function hasPermission(interaction, permission) {
+  return interaction.memberPermissions?.has(permission) || false;
+}
 
+function hasSupportRole(member) {
   return Boolean(
-    roles?.has(SUPPORT_ROLE_ID) ||
-    roles?.has(ESCALATION_ROLE_ID)
+    member?.roles?.cache?.has(SUPPORT_ROLE_ID) ||
+    member?.roles?.cache?.has(ESCALATION_ROLE_ID)
   );
 }
 
 function isStaff(interaction) {
-  return isAdmin(interaction) || hasSupportRole(interaction);
+  return isAdmin(interaction) || hasSupportRole(interaction.member);
 }
 
-function getTicket(channelId) {
-  return data.tickets[channelId];
+function makeButton(customId, label, style = ButtonStyle.Secondary) {
+  return new ButtonBuilder()
+    .setCustomId(customId)
+    .setLabel(label)
+    .setStyle(style);
+}
+
+function getTicket(guildId, channelId) {
+  return data.tickets[`${guildId}:${channelId}`];
 }
 
 function getConfig(guildId) {
   return data.ticketConfigs[guildId];
 }
 
-function makeButton(
-  id,
-  label,
-  style = ButtonStyle.Secondary
-) {
-  return new ButtonBuilder()
-    .setCustomId(id)
-    .setLabel(label)
-    .setStyle(style);
+function isBlacklisted(guildId, userId, member = null) {
+  const stored = data.blacklistedUsers[guildId]?.[userId];
+  const hasRole = member?.roles?.cache?.has(TICKET_BLACKLIST_ROLE_ID);
+  return Boolean(stored || hasRole);
 }
 
-function slugify(value) {
-  return (
-    String(value || "member")
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 70) || "member"
+function warnRecords(guildId, userId) {
+  return (data.warnings[userId] || []).filter(
+    record => record.guildId === guildId
   );
 }
 
-// ==================================================
-// TICKET LOGS
-// ONE LOG MESSAGE PER TICKET
-// ==================================================
-
-async function updateTicketLog(guild, ticket) {
-  if (!ticket.logChannelId || !ticket.logMessageId) {
-    return;
-  }
-
-  const channel = await guild.channels
-    .fetch(ticket.logChannelId)
-    .catch(() => null);
-
-  if (!channel?.isTextBased()) {
-    return;
-  }
-
-  const claimed = ticket.claimedBy
-    ? `<@${ticket.claimedBy}>`
-    : "N/A";
-
-  const status = ticket.closed ? "Closed" : "Open";
-
-  const lines = [
-    "## London, Uxbridge | Ticket Log",
-    `**Ticket number:** #${ticket.ticketNumber}`,
-    `**Ticket type:** ${
-      TICKET_TYPES[ticket.type]?.label || ticket.type
-    }`,
-    `**Opened by:** <@${ticket.userId}>`,
-    `**Ticket channel:** <#${ticket.channelId}>`,
-    `**Created:** <t:${Math.floor(ticket.createdAt / 1000)}:F>`,
-    `**Status:** ${status}`,
-    `**Claimed by:** ${claimed}`,
-    `**Escalated:** ${ticket.escalated ? "Yes" : "No"}`,
-    `**Last action:** ${ticket.lastAction || "Ticket opened"}`,
-    `**Last updated:** <t:${Math.floor(
-      (ticket.updatedAt || ticket.createdAt) / 1000
-    )}:F>`,
-  ];
-
-  if (ticket.closedBy) {
-    lines.push(`**Closed by:** <@${ticket.closedBy}>`);
-  }
-
-  const message = await channel.messages
-    .fetch(ticket.logMessageId)
-    .catch(() => null);
-
-  if (message) {
-    await message.edit(v2(...lines)).catch(console.error);
-  }
+function ticketKey(guildId, channelId) {
+  return `${guildId}:${channelId}`;
 }
 
-async function createTicketLog(guild, ticket, logsChannelId) {
+async function sendTicketLog(guild, ticket, message) {
+  const config = getConfig(guild.id);
+  if (!config?.logsChannelId) return;
+
   const channel = await guild.channels
-    .fetch(logsChannelId)
+    .fetch(config.logsChannelId)
     .catch(() => null);
 
-  if (!channel?.isTextBased()) {
-    return;
-  }
+  if (!channel?.isTextBased()) return;
 
-  ticket.logChannelId = channel.id;
-  ticket.updatedAt = Date.now();
-  ticket.lastAction = "Ticket opened";
-
-  const message = await channel
-    .send(
-      v2(
-        "## London, Uxbridge | Ticket Log",
-        `**Ticket number:** #${ticket.ticketNumber}`,
-        `**Ticket type:** ${
-          TICKET_TYPES[ticket.type]?.label || ticket.type
-        }`,
-        `**Opened by:** <@${ticket.userId}>`,
-        `**Ticket channel:** <#${ticket.channelId}>`,
-        `**Created:** <t:${Math.floor(ticket.createdAt / 1000)}:F>`,
-        "**Status:** Open",
-        "**Claimed by:** N/A",
-        "**Escalated:** No",
-        "**Last action:** Ticket opened",
-        `**Last updated:** <t:${Math.floor(ticket.createdAt / 1000)}:F>`
+  await channel.send({
+    embeds: [
+      embed(
+        "Ticket Activity",
+        [
+          `**Ticket:** <#${ticket.channelId}>`,
+          `**Owner:** <@${ticket.userId}>`,
+          `**Activity:** ${message}`
+        ].join("\n")
       )
-    )
-    .catch((error) => {
-      console.error("Could not create ticket log:", error);
-      return null;
-    });
+    ]
+  }).catch(error => console.error("Ticket log error:", error));
+}
 
-  if (message) {
-    ticket.logMessageId = message.id;
-    saveData();
+/* ==================================================
+   TICKET TYPES
+================================================== */
+
+const TICKET_TYPES = {
+  report: {
+    label: "Report a User",
+    description: "Report rule-breaking or misconduct.",
+    color: 0xC0392B
+  },
+  appeal: {
+    label: "Appeals",
+    description: "Appeal a moderation action.",
+    color: 0x3498DB
+  },
+  staff: {
+    label: "Staff Report",
+    description: "Raise a concern about a staff member.",
+    color: 0xE67E22
+  },
+  enquiries: {
+    label: "Enquiries",
+    description: "Contact the support team.",
+    color: 0x3F5378
   }
-}
+};
 
-async function sendTicketLog(guild, ticket, text) {
-  ticket.lastAction = text;
-  ticket.updatedAt = Date.now();
-
-  saveData();
-
-  await updateTicketLog(guild, ticket);
-}
-
-// ==================================================
-// SLASH COMMANDS
-// ==================================================
+/* ==================================================
+   SLASH COMMAND DEFINITIONS
+================================================== */
 
 const commands = [
   new SlashCommandBuilder()
     .setName("ping")
-    .setDescription("Check whether the bot is online."),
-
-  new SlashCommandBuilder()
-    .setName("information")
-    .setDescription("Post the community information panel.")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.Administrator
-    ),
-
-  new SlashCommandBuilder()
-    .setName("ticket")
-    .setDescription("Set up a Components V2 ticket panel.")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.Administrator
-    ),
+    .setDescription("Check bot response and latency"),
 
   new SlashCommandBuilder()
     .setName("help")
-    .setDescription("View the bot command list."),
+    .setDescription("View available bot commands"),
 
   new SlashCommandBuilder()
     .setName("userinfo")
-    .setDescription("View information about a member.")
-    .addUserOption((option) =>
-      option
-        .setName("member")
-        .setDescription("Member to inspect.")
-        .setRequired(false)
+    .setDescription("View information about a member")
+    .addUserOption(o =>
+      o.setName("member").setDescription("Member to inspect").setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("information")
+    .setDescription("Post the community information panel"),
+
+  new SlashCommandBuilder()
+    .setName("ticket")
+    .setDescription("Configure and publish the support ticket panel")
+    .setChannelOption(o =>
+      o.setName("panel_channel")
+        .setDescription("Channel where members open tickets")
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)
+    )
+    .addChannelOption(o =>
+      o.setName("category")
+        .setDescription("Category for private ticket channels")
+        .addChannelTypes(ChannelType.GuildCategory)
+        .setRequired(true)
+    )
+    .addChannelOption(o =>
+      o.setName("logs_channel")
+        .setDescription("Channel for ticket logs")
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)
+    )
+    .addStringOption(o =>
+      o.setName("type")
+        .setDescription("Ticket panel type")
+        .setRequired(true)
+        .addChoices(
+          { name: "Report a User", value: "report" },
+          { name: "Appeals", value: "appeal" },
+          { name: "Staff Report", value: "staff" },
+          { name: "Enquiries", value: "enquiries" }
+        )
     ),
 
   new SlashCommandBuilder()
     .setName("staff-shift")
-    .setDescription("Manage staff shifts.")
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("start")
-        .setDescription("Start your staff shift.")
+    .setDescription("Manage your staff shift")
+    .addSubcommand(s =>
+      s.setName("start").setDescription("Start your staff shift")
     )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("end")
-        .setDescription("End your staff shift.")
+    .addSubcommand(s =>
+      s.setName("end").setDescription("End your staff shift")
     ),
 
   new SlashCommandBuilder()
     .setName("military-operation")
-    .setDescription("Manage military operations.")
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("start")
-        .setDescription("Start an operation.")
-        .addStringOption((option) =>
-          option
-            .setName("name")
-            .setDescription("Operation name.")
-            .setRequired(true)
+    .setDescription("Manage military operations")
+    .addSubcommand(s =>
+      s.setName("start")
+        .setDescription("Start an operation")
+        .addStringOption(o =>
+          o.setName("name").setDescription("Operation name").setRequired(true)
         )
     )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("end")
-        .setDescription("End the current operation.")
+    .addSubcommand(s =>
+      s.setName("end").setDescription("End the active operation")
     )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("status")
-        .setDescription("View operation status.")
+    .addSubcommand(s =>
+      s.setName("status").setDescription("View operation status")
     ),
 
   new SlashCommandBuilder()
     .setName("training-session")
-    .setDescription("Announce a training session.")
-    .addStringOption((option) =>
-      option
-        .setName("details")
-        .setDescription("Training details.")
-        .setRequired(true)
+    .setDescription("Announce a training session")
+    .addStringOption(o =>
+      o.setName("details").setDescription("Training details").setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("warn")
-    .setDescription("Warn a member.")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ModerateMembers
+    .setDescription("Warn a member")
+    .addUserOption(o =>
+      o.setName("member").setDescription("Member to warn").setRequired(true)
     )
-    .addUserOption((option) =>
-      option
-        .setName("member")
-        .setDescription("Member to warn.")
-        .setRequired(true)
-    )
-    .addStringOption((option) =>
-      option
-        .setName("reason")
-        .setDescription("Reason.")
-        .setRequired(true)
+    .addStringOption(o =>
+      o.setName("reason").setDescription("Reason for the warning").setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("timeout")
-    .setDescription("Timeout a member.")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ModerateMembers
+    .setDescription("Timeout a member")
+    .addUserOption(o =>
+      o.setName("member").setDescription("Member to timeout").setRequired(true)
     )
-    .addUserOption((option) =>
-      option
-        .setName("member")
-        .setDescription("Member to timeout.")
-        .setRequired(true)
-    )
-    .addIntegerOption((option) =>
-      option
-        .setName("minutes")
-        .setDescription("Duration in minutes.")
+    .addIntegerOption(o =>
+      o.setName("minutes")
+        .setDescription("Timeout duration in minutes")
         .setMinValue(1)
         .setMaxValue(40320)
         .setRequired(true)
     )
-    .addStringOption((option) =>
-      option
-        .setName("reason")
-        .setDescription("Reason.")
-        .setRequired(false)
+    .addStringOption(o =>
+      o.setName("reason").setDescription("Reason").setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("kick")
-    .setDescription("Kick a member.")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.KickMembers
+    .setDescription("Kick a member")
+    .addUserOption(o =>
+      o.setName("member").setDescription("Member to kick").setRequired(true)
     )
-    .addUserOption((option) =>
-      option
-        .setName("member")
-        .setDescription("Member to kick.")
-        .setRequired(true)
-    )
-    .addStringOption((option) =>
-      option
-        .setName("reason")
-        .setDescription("Reason.")
-        .setRequired(false)
+    .addStringOption(o =>
+      o.setName("reason").setDescription("Reason").setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("ban")
-    .setDescription("Ban a member.")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.BanMembers
+    .setDescription("Ban a user")
+    .addUserOption(o =>
+      o.setName("member").setDescription("User to ban").setRequired(true)
     )
-    .addUserOption((option) =>
-      option
-        .setName("member")
-        .setDescription("Member to ban.")
-        .setRequired(true)
+    .addStringOption(o =>
+      o.setName("reason").setDescription("Reason").setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("unban")
+    .setDescription("Unban a user by ID")
+    .addStringOption(o =>
+      o.setName("user_id").setDescription("Discord user ID").setRequired(true)
     )
-    .addStringOption((option) =>
-      option
-        .setName("reason")
-        .setDescription("Reason.")
-        .setRequired(false)
+    .addStringOption(o =>
+      o.setName("reason").setDescription("Reason").setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("purge")
-    .setDescription("Delete messages in this channel.")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ManageMessages
-    )
-    .addIntegerOption((option) =>
-      option
-        .setName("amount")
-        .setDescription("Number of messages to delete.")
+    .setDescription("Delete recent messages")
+    .addIntegerOption(o =>
+      o.setName("amount")
+        .setDescription("Number of messages, between 1 and 100")
         .setMinValue(1)
         .setMaxValue(100)
         .setRequired(true)
@@ -562,41 +369,54 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("modlogs")
-    .setDescription("View a member's warning records.")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ModerateMembers
-    )
-    .addUserOption((option) =>
-      option
-        .setName("member")
-        .setDescription("Member to inspect.")
+    .setDescription("View a member's moderation records")
+    .addUserOption(o =>
+      o.setName("member").setDescription("Member to inspect").setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("clearwarns")
+    .setDescription("Clear moderation records for a member in this server")
+    .addUserOption(o =>
+      o.setName("member").setDescription("Member to clear").setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("slowmode")
+    .setDescription("Set channel slowmode")
+    .addIntegerOption(o =>
+      o.setName("seconds")
+        .setDescription("Seconds between messages; 0 disables slowmode")
+        .setMinValue(0)
+        .setMaxValue(21600)
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
+    .setName("lock")
+    .setDescription("Prevent @everyone from sending messages in this channel"),
+
+  new SlashCommandBuilder()
+    .setName("unlock")
+    .setDescription("Remove the @everyone message lock in this channel"),
+
+  new SlashCommandBuilder()
     .setName("announce")
-    .setDescription("Post an announcement.")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ManageGuild
-    )
-    .addChannelOption((option) =>
-      option
-        .setName("channel")
-        .setDescription("Announcement channel.")
+    .setDescription("Post an announcement")
+    .addChannelOption(o =>
+      o.setName("channel")
+        .setDescription("Destination text channel")
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true)
     )
-    .addStringOption((option) =>
-      option
-        .setName("message")
-        .setDescription("Announcement text.")
-        .setRequired(true)
-    ),
-].map((command) => command.toJSON());
+    .addStringOption(o =>
+      o.setName("message").setDescription("Announcement text").setRequired(true)
+    )
+].map(command => command.toJSON());
 
-// ==================================================
-// REGISTER COMMANDS GLOBALLY
-// ==================================================
+/* ==================================================
+   REGISTER COMMANDS
+================================================== */
 
 client.once("ready", async () => {
   console.log(`London, Uxbridge online as ${client.user.tag}`);
@@ -604,35 +424,32 @@ client.once("ready", async () => {
   try {
     const rest = new REST({ version: "10" }).setToken(TOKEN);
 
-    console.log("Registering global slash commands...");
+    console.log(`Registering ${commands.length} global slash commands...`);
 
     await rest.put(
       Routes.applicationCommands(CLIENT_ID),
       { body: commands }
     );
 
-    console.log(`${commands.length} global commands registered.`);
+    console.log(`Successfully registered ${commands.length} commands.`);
   } catch (error) {
-    console.error("Command registration failed:", error);
+    console.error("SLASH COMMAND REGISTRATION FAILED:", error);
   }
 });
 
-// ==================================================
-// INTERACTIONS
-// ==================================================
+/* ==================================================
+   SLASH COMMAND HANDLERS
+================================================== */
 
-client.on("interactionCreate", async (interaction) => {
+client.on("interactionCreate", async interaction => {
   try {
-    // --------------------------------------------------
-    // SLASH COMMANDS
-    // --------------------------------------------------
+    /* -----------------------------------------------
+       COMMANDS
+    ----------------------------------------------- */
 
     if (interaction.isChatInputCommand()) {
       if (!interaction.guild) {
-        return privateReply(
-          interaction,
-          "Please use this command inside a server."
-        );
+        return privateReply(interaction, "Server Only", "Use this command inside a server.");
       }
 
       const guild = interaction.guild;
@@ -642,225 +459,221 @@ client.on("interactionCreate", async (interaction) => {
       if (name === "ping") {
         return privateReply(
           interaction,
-          "## Pong",
-          "London, Uxbridge is online and responding."
+          "Pong!",
+          `Latency: **${client.ws.ping}ms**`
         );
       }
 
       if (name === "help") {
         return privateReply(
           interaction,
-          "## London, Uxbridge | Command Centre",
-          "**Tickets:** `/ticket`",
-          "**Community:** `/information`, `/help`, `/ping`, `/userinfo`",
-          "**Staff:** `/staff-shift`, `/training-session`",
-          "**Operations:** `/military-operation`",
-          "**Moderation:** `/warn`, `/timeout`, `/kick`, `/ban`, `/purge`, `/modlogs`, `/announce`",
-          `[Support server](${SUPPORT_URL})`
+          "London, Uxbridge | Commands",
+          [
+            "**General:** `/ping`, `/help`, `/userinfo`",
+            "**Community:** `/information`",
+            "**Tickets:** `/ticket`",
+            "**Staff:** `/staff-shift`, `/training-session`",
+            "**Operations:** `/military-operation`",
+            "**Moderation:** `/warn`, `/timeout`, `/kick`, `/ban`, `/unban`, `/purge`, `/modlogs`, `/clearwarns`",
+            "**Channels:** `/slowmode`, `/lock`, `/unlock`",
+            "**Announcements:** `/announce`",
+            `[Support Server](${SUPPORT_URL})`
+          ].join("\n")
         );
       }
 
-      // --------------------------------------------------
-      // TICKET SETUP
-      // --------------------------------------------------
+      if (name === "userinfo") {
+        const target = interaction.options.getUser("member") || user;
+        const member = await guild.members.fetch(target.id).catch(() => null);
 
-      if (name === "ticket") {
-        if (!isAdmin(interaction)) {
-          return privateReply(
-            interaction,
-            "Only server administrators can configure ticket panels."
-          );
-        }
-
-        const key = `${guild.id}:${user.id}`;
-
-        setupSessions.set(key, {
-          guildId: guild.id,
-          userId: user.id,
-          type: null,
-          panelChannelId: null,
-          categoryId: null,
-          logsChannelId: null,
-          createdAt: Date.now(),
-        });
-
-        const typeMenu = new StringSelectMenuBuilder()
-          .setCustomId("ticket_setup_type")
-          .setPlaceholder("1. Choose a ticket panel type")
-          .addOptions(
-            ...Object.entries(TICKET_TYPES).map(([value, type]) => ({
-              label: type.label,
-              value,
-              description: type.description.slice(0, 100),
-            }))
-          );
-
-        const panelMenu = new ChannelSelectMenuBuilder()
-          .setCustomId("ticket_setup_panel_channel")
-          .setPlaceholder("2. Choose the panel channel")
-          .setChannelTypes(ChannelType.GuildText)
-          .setMinValues(1)
-          .setMaxValues(1);
-
-        const categoryMenu = new ChannelSelectMenuBuilder()
-          .setCustomId("ticket_setup_category")
-          .setPlaceholder("3. Choose the ticket category")
-          .setChannelTypes(ChannelType.GuildCategory)
-          .setMinValues(1)
-          .setMaxValues(1);
-
-        const logsMenu = new ChannelSelectMenuBuilder()
-          .setCustomId("ticket_setup_logs_channel")
-          .setPlaceholder("4. Choose the logs channel")
-          .setChannelTypes(ChannelType.GuildText)
-          .setMinValues(1)
-          .setMaxValues(1);
-
-        return interaction.reply(
-          v2WithRows(
-            [
-              "## London, Uxbridge | Ticket Setup",
-              "Configure one ticket panel at a time. Nothing is published until you press **Confirm Setup**.",
-              "**1 — Panel type:** Choose Report a User, Appeals, Staff Report or Enquiries.",
-              "**2 — Panel channel:** Where members will see the panel.",
-              "**3 — Ticket category:** Where new private ticket channels will be created.",
-              "**4 — Logs channel:** Where ticket activity will be recorded.",
-              "**5 — Confirm:** Once all four choices are selected, press Confirm Setup to publish the panel.",
-            ],
-            [
-              new ActionRowBuilder().addComponents(typeMenu),
-              new ActionRowBuilder().addComponents(panelMenu),
-              new ActionRowBuilder().addComponents(categoryMenu),
-              new ActionRowBuilder().addComponents(logsMenu),
-              new ActionRowBuilder().addComponents(
-                makeButton(
-                  "ticket_setup_confirm",
-                  "Confirm Setup",
-                  ButtonStyle.Success
-                ),
-                makeButton(
-                  "ticket_setup_cancel",
-                  "Cancel",
-                  ButtonStyle.Danger
-                )
-              ),
-            ],
-            true
-          )
+        return privateReply(
+          interaction,
+          "Member Information",
+          [
+            `**Username:** ${target.tag || target.username}`,
+            `**ID:** ${target.id}`,
+            `**Bot:** ${target.bot ? "Yes" : "No"}`,
+            `**Account created:** <t:${Math.floor(target.createdTimestamp / 1000)}:F>`,
+            `**Joined server:** ${
+              member?.joinedTimestamp
+                ? `<t:${Math.floor(member.joinedTimestamp / 1000)}:F>`
+                : "Unknown"
+            }`
+          ].join("\n")
         );
       }
 
-      // --------------------------------------------------
-      // INFORMATION PANEL
-      // --------------------------------------------------
+      /* COMMUNITY INFORMATION */
 
       if (name === "information") {
         if (!isAdmin(interaction)) {
-          return privateReply(
-            interaction,
-            "Only administrators can post the information panel."
-          );
+          return privateReply(interaction, "Permission Denied", "Only administrators can post this panel.");
         }
 
         const menu = new StringSelectMenuBuilder()
           .setCustomId("community_information")
-          .setPlaceholder("Choose an information section")
+          .setPlaceholder("Choose a section")
           .addOptions(
-            { label: "Information", value: "information" },
+            { label: "About the Community", value: "information" },
             { label: "Server Rules", value: "server_rules" },
             { label: "Game Rules", value: "game_rules" },
             { label: "Departments", value: "departments" },
             { label: "Disclaimer", value: "disclaimer" }
           );
 
-        await interaction.channel.send(
-          v2WithRows(
-            [
-              "## London, Uxbridge",
-              "Welcome to London, Uxbridge, a British Roblox roleplay community.",
-              "Choose a section from the menu below to view our information, rules and departments.",
+        try {
+          await interaction.channel.send({
+            embeds: [
+              embed(
+                "Welcome to London, Uxbridge",
+                [
+                  "Welcome to our British Roblox roleplay community, based around Uxbridge and West London.",
+                  "Our aim is to provide organised, enjoyable and realistic roleplay for civilians, public services, emergency services and military personnel.",
+                  "",
+                  "Use the menu below to learn about our community, rules and departments."
+                ].join("\n")
+              )
             ],
-            [new ActionRowBuilder().addComponents(menu)]
-          )
-        );
+            components: [new ActionRowBuilder().addComponents(menu)]
+          });
 
-        return privateReply(
-          interaction,
-          "The information panel has been posted."
-        );
-      }
-
-      // --------------------------------------------------
-      // USER INFORMATION
-      // --------------------------------------------------
-
-      if (name === "userinfo") {
-        const target =
-          interaction.options.getUser("member") || user;
-
-        const targetMember = await guild.members
-          .fetch(target.id)
-          .catch(() => null);
-
-        return privateReply(
-          interaction,
-          "## Member Information",
-          `**Username:** ${target.username}`,
-          `**User ID:** ${target.id}`,
-          `**Account created:** <t:${Math.floor(target.createdTimestamp / 1000)}:F>`,
-          `**Joined server:** ${
-            targetMember?.joinedTimestamp
-              ? `<t:${Math.floor(targetMember.joinedTimestamp / 1000)}:F>`
-              : "Unknown"
-          }`
-        );
-      }
-
-      // --------------------------------------------------
-      // STAFF SHIFTS
-      // --------------------------------------------------
-
-      if (name === "staff-shift") {
-        if (!isStaff(interaction)) {
+          return privateReply(interaction, "Panel Published", "The community information panel has been posted.");
+        } catch (error) {
+          console.error("INFORMATION PANEL ERROR:", error);
           return privateReply(
             interaction,
-            "You do not have permission to manage staff shifts."
+            "Could Not Publish",
+            `Check my channel permissions.\n\`\`\`${String(error.message || error).slice(0, 700)}\`\`\``
+          );
+        }
+      }
+
+      /* TICKET SETUP AND PUBLISHING */
+
+      if (name === "ticket") {
+        if (!isAdmin(interaction)) {
+          return privateReply(interaction, "Permission Denied", "Only administrators can set up ticket panels.");
+        }
+
+        const panelChannel = interaction.options.getChannel("panel_channel");
+        const category = interaction.options.getChannel("category");
+        const logsChannel = interaction.options.getChannel("logs_channel");
+        const type = interaction.options.getString("type");
+        const ticketType = TICKET_TYPES[type];
+
+        if (!ticketType) {
+          return privateReply(interaction, "Invalid Ticket Type", "Choose a valid ticket type.");
+        }
+
+        const me = await guild.members.fetchMe();
+
+        const panelPermissions = panelChannel.permissionsFor(me);
+
+        if (
+          !panelPermissions?.has(P.ViewChannel) ||
+          !panelPermissions?.has(P.SendMessages)
+        ) {
+          return privateReply(
+            interaction,
+            "Missing Permissions",
+            `I need **View Channel** and **Send Messages** in <#${panelChannel.id}>.`
           );
         }
 
+        data.ticketConfigs[guild.id] = {
+          categoryId: category.id,
+          logsChannelId: logsChannel.id
+        };
+
+        saveData();
+
+        const menu = new StringSelectMenuBuilder()
+          .setCustomId("ticket_type_select")
+          .setPlaceholder("Select the reason for your ticket")
+          .addOptions(
+            ...Object.entries(TICKET_TYPES).map(([value, item]) => ({
+              label: item.label,
+              value,
+              description: item.description
+            }))
+          );
+
+        try {
+          await panelChannel.send({
+            embeds: [
+              embed(
+                `London, Uxbridge | ${ticketType.label}`,
+                [
+                  "**ONLY SUPPORT SERVER**",
+                  "This ticket system is exclusively for support requests within our support server.",
+                  "",
+                  `**Panel type:** ${ticketType.label}`,
+                  `**Purpose:** ${ticketType.description}`,
+                  "",
+                  "Please choose the appropriate ticket type from the menu below. Do not open tickets for general community information.",
+                  "",
+                  `[Visit the support server](${SUPPORT_URL})`
+                ].join("\n"),
+                ticketType.color
+              )
+            ],
+            components: [
+              new ActionRowBuilder().addComponents(menu)
+            ]
+          });
+
+          return privateReply(
+            interaction,
+            "Ticket Panel Published",
+            `The panel has been posted in <#${panelChannel.id}>.`
+          );
+        } catch (error) {
+          console.error("COULD NOT POST TICKET PANEL:", error);
+
+          return privateReply(
+            interaction,
+            "Could Not Publish Ticket Panel",
+            [
+              `**Channel:** <#${panelChannel.id}>`,
+              "Check that I can view the channel and send messages, and that the channel is not read-only.",
+              "",
+              `**Discord error:** ${String(error.message || error).slice(0, 700)}`
+            ].join("\n")
+          );
+        }
+      }
+
+      /* STAFF SHIFTS */
+
+      if (name === "staff-shift") {
+        if (!isStaff(interaction)) {
+          return privateReply(interaction, "Permission Denied", "You need the support staff role or Administrator.");
+        }
+
         const sub = interaction.options.getSubcommand();
+        const shift = data.shifts[guild.id];
 
         if (sub === "start") {
-          if (data.shifts[guild.id]?.userId === user.id) {
-            return privateReply(
-              interaction,
-              "You already have an active shift."
-            );
+          if (shift?.userId === user.id) {
+            return privateReply(interaction, "Shift Already Active", "You already have an active staff shift.");
           }
 
           data.shifts[guild.id] = {
             userId: user.id,
-            startedAt: Date.now(),
+            startedAt: Date.now()
           };
 
           saveData();
 
           return privateReply(
             interaction,
-            "## Staff Shift Started",
-            `**Staff member:** ${user}`,
-            `**Started:** <t:${Math.floor(Date.now() / 1000)}:F>`,
-            "Your shift will automatically expire after one hour."
+            "Staff Shift Started",
+            `**Staff member:** ${user}\n**Started:** <t:${Math.floor(Date.now() / 1000)}:F>\nShifts automatically expire after one hour.`
           );
         }
 
-        const shift = data.shifts[guild.id];
-
         if (!shift || shift.userId !== user.id) {
-          return privateReply(
-            interaction,
-            "You do not have an active shift."
-          );
+          return privateReply(interaction, "No Active Shift", "You do not have an active staff shift.");
         }
 
         delete data.shifts[guild.id];
@@ -868,1191 +681,825 @@ client.on("interactionCreate", async (interaction) => {
 
         return privateReply(
           interaction,
-          "## Staff Shift Ended",
-          `**Staff member:** ${user}`,
-          `**Duration:** ${Math.floor(
-            (Date.now() - shift.startedAt) / 60000
-          )} minutes`
+          "Staff Shift Ended",
+          `**Duration:** ${Math.floor((Date.now() - shift.startedAt) / 60000)} minutes.`
         );
       }
 
-      // --------------------------------------------------
-      // MILITARY OPERATIONS
-      // --------------------------------------------------
+      /* MILITARY OPERATIONS */
 
       if (name === "military-operation") {
         if (!isStaff(interaction)) {
-          return privateReply(
-            interaction,
-            "You do not have permission to manage operations."
-          );
+          return privateReply(interaction, "Permission Denied", "You need the support staff role or Administrator.");
         }
 
         const sub = interaction.options.getSubcommand();
+        const operation = data.operations[guild.id];
 
         if (sub === "start") {
-          if (data.operations[guild.id]) {
-            return privateReply(
-              interaction,
-              "An operation is already active."
-            );
+          if (operation) {
+            return privateReply(interaction, "Operation Already Active", `**${operation.name}** is already running.`);
           }
 
-          const operationName =
-            interaction.options.getString("name");
+          const operationName = interaction.options.getString("name");
 
           data.operations[guild.id] = {
             name: operationName,
             startedAt: Date.now(),
-            startedBy: user.id,
+            startedBy: user.id
           };
 
           saveData();
 
           return privateReply(
             interaction,
-            "## Operation Started",
-            `**Operation:** ${operationName}`,
-            `**Started by:** ${user}`,
-            `**Time:** <t:${Math.floor(Date.now() / 1000)}:F>`,
-            "This operation will automatically expire after one hour."
+            "Military Operation Started",
+            `**Operation:** ${operationName}\n**Organiser:** ${user}\nAutomatically expires after one hour.`
           );
         }
 
         if (sub === "end") {
-          const operation = data.operations[guild.id];
-
           if (!operation) {
-            return privateReply(
-              interaction,
-              "There is no active operation."
-            );
+            return privateReply(interaction, "No Active Operation", "There is no active operation.");
           }
 
           delete data.operations[guild.id];
           saveData();
 
-          return privateReply(
-            interaction,
-            "## Operation Ended",
-            `**Operation:** ${operation.name}`,
-            `**Ended by:** ${user}`
-          );
+          return privateReply(interaction, "Operation Ended", `**Operation:** ${operation.name}`);
         }
 
-        const operation = data.operations[guild.id];
-
         if (!operation) {
-          return privateReply(
-            interaction,
-            "There is no active operation."
-          );
+          return privateReply(interaction, "No Active Operation", "There is no active operation.");
         }
 
         return privateReply(
           interaction,
-          "## Operation Status",
-          `**Operation:** ${operation.name}`,
-          `**Started by:** <@${operation.startedBy}>`,
-          `**Started:** <t:${Math.floor(operation.startedAt / 1000)}:R>`
+          "Military Operation Status",
+          `**Operation:** ${operation.name}\n**Organiser:** <@${operation.startedBy}>\n**Started:** <t:${Math.floor(operation.startedAt / 1000)}:R>`
         );
       }
 
-      // --------------------------------------------------
-      // TRAINING SESSION
-      // --------------------------------------------------
+      /* TRAINING */
 
       if (name === "training-session") {
         if (!isStaff(interaction)) {
-          return privateReply(
-            interaction,
-            "You do not have permission to announce training."
-          );
+          return privateReply(interaction, "Permission Denied", "You need the support staff role or Administrator.");
         }
 
         const details = interaction.options.getString("details");
 
-        await interaction.channel.send(
-          v2(
-            "## Training Session",
-            `**Organiser:** ${user}`,
-            `**Details:** ${details}`
-          )
-        );
+        try {
+          await interaction.channel.send({
+            embeds: [
+              embed(
+                "London, Uxbridge | Training Session",
+                `**Organiser:** ${user}\n\n${details}\n\nPlease follow the organiser's instructions and arrive prepared.`
+              )
+            ]
+          });
 
-        return privateReply(
-          interaction,
-          "The training announcement has been posted."
-        );
+          return privateReply(interaction, "Training Announced", "The training session announcement has been posted.");
+        } catch (error) {
+          console.error("TRAINING ANNOUNCEMENT ERROR:", error);
+          return privateReply(interaction, "Announcement Failed", "I could not post the training announcement. Check channel permissions.");
+        }
       }
 
-      // --------------------------------------------------
-      // WARN
-      // --------------------------------------------------
+      /* MODERATION PERMISSION HELPER */
+
+      const target = interaction.options.getUser("member");
+
+      if (["warn", "timeout", "kick", "ban", "unban", "purge", "modlogs", "clearwarns"].includes(name)) {
+        const neededPermission = {
+          warn: P.ModerateMembers,
+          timeout: P.ModerateMembers,
+          kick: P.KickMembers,
+          ban: P.BanMembers,
+          unban: P.BanMembers,
+          purge: P.ManageMessages,
+          modlogs: P.ModerateMembers,
+          clearwarns: P.ModerateMembers
+        }[name];
+
+        if (!hasPermission(interaction, neededPermission)) {
+          return privateReply(interaction, "Permission Denied", "You do not have the Discord permission required for this command.");
+        }
+      }
+
+      /* WARN */
 
       if (name === "warn") {
-        const target = interaction.options.getUser("member");
         const reason = interaction.options.getString("reason");
+        const member = await guild.members.fetch(target.id).catch(() => null);
+
+        if (target.id === user.id || target.id === client.user.id) {
+          return privateReply(interaction, "Invalid Target", "You cannot warn yourself or the bot.");
+        }
+
+        if (
+          member &&
+          !isAdmin(interaction) &&
+          member.roles.highest.position >= interaction.member.roles.highest.position
+        ) {
+          return privateReply(interaction, "Role Hierarchy", "You cannot warn someone with an equal or higher role.");
+        }
 
         data.warnings[target.id] ??= [];
-
         data.warnings[target.id].push({
           guildId: guild.id,
           moderatorId: user.id,
           reason,
           timestamp: Date.now(),
+          action: "Warning"
         });
 
         saveData();
 
-        await target
-          .send(
-            privateV2(
-              "## Warning Received",
-              `**Server:** ${guild.name}`,
-              `**Reason:** ${reason}`
-            )
-          )
-          .catch(() => {});
+        await target.send({
+          embeds: [
+            embed("You Have Received a Warning", `**Server:** ${guild.name}\n**Reason:** ${reason}`)
+          ]
+        }).catch(() => {});
 
-        return privateReply(
-          interaction,
-          "## Warning Recorded",
-          `**Member:** ${target}`,
-          `**Reason:** ${reason}`
-        );
+        return privateReply(interaction, "Warning Recorded", `**Member:** ${target}\n**Reason:** ${reason}`);
       }
 
-      // --------------------------------------------------
-      // TIMEOUT
-      // --------------------------------------------------
+      /* TIMEOUT */
 
       if (name === "timeout") {
-        const target = interaction.options.getMember("member");
         const minutes = interaction.options.getInteger("minutes");
-        const reason =
-          interaction.options.getString("reason") ||
-          "No reason provided";
+        const reason = interaction.options.getString("reason");
+        const member = await guild.members.fetch(target.id).catch(() => null);
 
-        if (!target?.moderatable) {
-          return privateReply(
-            interaction,
-            "I cannot timeout that member. Check my permissions and role position."
-          );
+        if (!member) {
+          return privateReply(interaction, "Member Not Found", "That member is not in this server.");
         }
 
-        await target.timeout(minutes * 60000, reason);
+        if (!member.moderatable) {
+          return privateReply(interaction, "Cannot Timeout", "Check the bot's Moderate Members permission and role hierarchy.");
+        }
 
-        return privateReply(
-          interaction,
-          "## Member Timed Out",
-          `**Member:** ${target.user}`,
-          `**Duration:** ${minutes} minutes`,
-          `**Reason:** ${reason}`
-        );
+        await member.timeout(minutes * 60000, reason);
+
+        data.warnings[target.id] ??= [];
+        data.warnings[target.id].push({
+          guildId: guild.id,
+          moderatorId: user.id,
+          reason,
+          timestamp: Date.now(),
+          action: `Timeout (${minutes} minutes)`
+        });
+
+        saveData();
+
+        return privateReply(interaction, "Member Timed Out", `**Member:** ${target}\n**Duration:** ${minutes} minutes\n**Reason:** ${reason}`);
       }
 
-      // --------------------------------------------------
-      // KICK
-      // --------------------------------------------------
+      /* KICK */
 
       if (name === "kick") {
-        const target = interaction.options.getMember("member");
-        const reason =
-          interaction.options.getString("reason") ||
-          "No reason provided";
+        const reason = interaction.options.getString("reason");
+        const member = await guild.members.fetch(target.id).catch(() => null);
 
-        if (!target?.kickable) {
-          return privateReply(
-            interaction,
-            "I cannot kick that member. Check my permissions and role position."
-          );
+        if (!member) {
+          return privateReply(interaction, "Member Not Found", "That member is not in this server.");
         }
 
-        await target.kick(reason);
+        if (!member.kickable) {
+          return privateReply(interaction, "Cannot Kick", "Check the bot's Kick Members permission and role hierarchy.");
+        }
 
-        return privateReply(
-          interaction,
-          "## Member Kicked",
-          `**Member:** ${target.user.tag}`,
-          `**Reason:** ${reason}`
-        );
+        await member.kick(reason);
+
+        data.warnings[target.id] ??= [];
+        data.warnings[target.id].push({
+          guildId: guild.id,
+          moderatorId: user.id,
+          reason,
+          timestamp: Date.now(),
+          action: "Kick"
+        });
+
+        saveData();
+
+        return privateReply(interaction, "Member Kicked", `**Member:** ${target.tag}\n**Reason:** ${reason}`);
       }
 
-      // --------------------------------------------------
-      // BAN
-      // --------------------------------------------------
+      /* BAN */
 
       if (name === "ban") {
-        const target = interaction.options.getUser("member");
-        const reason =
-          interaction.options.getString("reason") ||
-          "No reason provided";
+        const reason = interaction.options.getString("reason");
+        const member = await guild.members.fetch(target.id).catch(() => null);
 
-        const targetMember = await guild.members
-          .fetch(target.id)
-          .catch(() => null);
-
-        if (targetMember && !targetMember.bannable) {
-          return privateReply(
-            interaction,
-            "I cannot ban that member. Check my permissions and role position."
-          );
+        if (member && !member.bannable) {
+          return privateReply(interaction, "Cannot Ban", "Check the bot's Ban Members permission and role hierarchy.");
         }
 
         await guild.members.ban(target.id, { reason });
 
-        return privateReply(
-          interaction,
-          "## Member Banned",
-          `**Member:** ${target.tag}`,
-          `**Reason:** ${reason}`
-        );
+        data.warnings[target.id] ??= [];
+        data.warnings[target.id].push({
+          guildId: guild.id,
+          moderatorId: user.id,
+          reason,
+          timestamp: Date.now(),
+          action: "Ban"
+        });
+
+        saveData();
+
+        return privateReply(interaction, "User Banned", `**User:** ${target.tag}\n**Reason:** ${reason}`);
       }
 
-      // --------------------------------------------------
-      // PURGE
-      // --------------------------------------------------
+      /* UNBAN */
+
+      if (name === "unban") {
+        const id = interaction.options.getString("user_id");
+        const reason = interaction.options.getString("reason") || "No reason provided";
+
+        if (!/^\d{17,20}$/.test(id)) {
+          return privateReply(interaction, "Invalid ID", "Enter a valid Discord user ID.");
+        }
+
+        await guild.members.unban(id, reason);
+
+        return privateReply(interaction, "User Unbanned", `**User ID:** ${id}\n**Reason:** ${reason}`);
+      }
+
+      /* PURGE */
 
       if (name === "purge") {
         const amount = interaction.options.getInteger("amount");
 
         if (!interaction.channel?.bulkDelete) {
-          return privateReply(
-            interaction,
-            "This command cannot be used here."
-          );
+          return privateReply(interaction, "Unsupported Channel", "This channel does not support bulk deletion.");
         }
 
-        const messages = await interaction.channel.bulkDelete(
-          amount,
-          true
-        );
+        const messages = await interaction.channel.bulkDelete(amount, true);
 
         return privateReply(
           interaction,
-          "## Messages Deleted",
-          `Deleted **${messages.size}** messages. Messages older than 14 days cannot be bulk deleted.`
+          "Messages Deleted",
+          `Deleted **${messages.size}** messages.\nDiscord does not allow bulk deletion of messages older than 14 days.`
         );
       }
 
-      // --------------------------------------------------
-      // MODERATION LOGS
-      // --------------------------------------------------
+      /* MODLOGS */
 
       if (name === "modlogs") {
-        const target = interaction.options.getUser("member");
-
-        const records = (data.warnings[target.id] || []).filter(
-          (record) => record.guildId === guild.id
-        );
+        const records = warnRecords(guild.id, target.id);
 
         if (!records.length) {
-          return privateReply(
-            interaction,
-            "No warnings are recorded for this member."
-          );
+          return privateReply(interaction, "No Records", `No moderation records found for ${target.tag} in this server.`);
         }
 
+        const description = records.slice(-10).reverse().map((record, index) =>
+          `**${index + 1}. ${record.action || "Warning"}**\nReason: ${record.reason}\nModerator: <@${record.moderatorId}>\n<t:${Math.floor(record.timestamp / 1000)}:R>`
+        ).join("\n\n");
+
+        return privateReply(interaction, `Moderation Records — ${target.tag}`, description);
+      }
+
+      /* CLEAR WARNS */
+
+      if (name === "clearwarns") {
+        const records = data.warnings[target.id] || [];
+        const removed = records.filter(record => record.guildId === guild.id).length;
+
+        data.warnings[target.id] = records.filter(record => record.guildId !== guild.id);
+        saveData();
+
+        return privateReply(interaction, "Records Cleared", `Removed **${removed}** moderation record(s) for ${target} from this server.`);
+      }
+
+      /* SLOWMODE */
+
+      if (name === "slowmode") {
+        if (!hasPermission(interaction, P.ManageChannels)) {
+          return privateReply(interaction, "Permission Denied", "You need Manage Channels.");
+        }
+
+        if (!interaction.channel?.setRateLimitPerUser) {
+          return privateReply(interaction, "Unsupported Channel", "Slowmode cannot be configured here.");
+        }
+
+        const seconds = interaction.options.getInteger("seconds");
+        await interaction.channel.setRateLimitPerUser(seconds);
+
         return privateReply(
           interaction,
-          "## Moderation Records",
-          `**Member:** ${target}`,
-          records
-            .slice(-10)
-            .map(
-              (record, index) =>
-                `**${index + 1}.** ${record.reason}\nModerator: <@${record.moderatorId}> · <t:${Math.floor(record.timestamp / 1000)}:R>`
-            )
-            .join("\n\n")
+          "Slowmode Updated",
+          seconds === 0 ? "Slowmode is disabled." : `Slowmode is now **${seconds} seconds**.`
         );
       }
 
-      // --------------------------------------------------
-      // ANNOUNCEMENTS
-      // --------------------------------------------------
+      /* LOCK / UNLOCK */
+
+      if (name === "lock" || name === "unlock") {
+        if (!hasPermission(interaction, P.ManageChannels)) {
+          return privateReply(interaction, "Permission Denied", "You need Manage Channels.");
+        }
+
+        const locked = name === "lock";
+
+        await interaction.channel.permissionOverwrites.edit(
+          guild.roles.everyone.id,
+          { SendMessages: locked ? false : null }
+        );
+
+        return privateReply(
+          interaction,
+          locked ? "Channel Locked" : "Channel Unlocked",
+          locked
+            ? "The @everyone role can no longer send messages in this channel."
+            : "The @everyone send-message override has been removed."
+        );
+      }
+
+      /* ANNOUNCE */
 
       if (name === "announce") {
-        const channel =
-          interaction.options.getChannel("channel");
-        const message =
-          interaction.options.getString("message");
+        if (!hasPermission(interaction, P.ManageGuild)) {
+          return privateReply(interaction, "Permission Denied", "You need Manage Server.");
+        }
 
-        await channel.send(
-          v2(
-            "## London, Uxbridge Announcement",
-            message,
-            `**Posted by:** ${user}`
-          )
-        );
+        const channel = interaction.options.getChannel("channel");
+        const message = interaction.options.getString("message");
 
-        return privateReply(
-          interaction,
-          "The announcement has been posted."
-        );
-      }
-    }
-
-    // --------------------------------------------------
-    // TICKET SETUP TYPE MENU
-    // --------------------------------------------------
-
-    if (
-      interaction.isStringSelectMenu() &&
-      interaction.customId === "ticket_setup_type"
-    ) {
-      if (!isAdmin(interaction)) {
-        return privateReply(
-          interaction,
-          "Only administrators can configure ticket panels."
-        );
-      }
-
-      const session = setupSessions.get(
-        `${interaction.guildId}:${interaction.user.id}`
-      );
-
-      if (!session) {
-        return privateReply(
-          interaction,
-          "Your setup session expired. Run `/ticket` again."
-        );
-      }
-
-      session.type = interaction.values[0];
-
-      return privateReply(
-        interaction,
-        `Selected panel type: **${TICKET_TYPES[session.type].label}**.`,
-        "Continue with the panel channel, ticket category and logs channel."
-      );
-    }
-
-    // --------------------------------------------------
-    // TICKET SETUP CHANNEL MENUS
-    // --------------------------------------------------
-
-    if (
-      interaction.isChannelSelectMenu() &&
-      [
-        "ticket_setup_panel_channel",
-        "ticket_setup_category",
-        "ticket_setup_logs_channel",
-      ].includes(interaction.customId)
-    ) {
-      if (!isAdmin(interaction)) {
-        return privateReply(
-          interaction,
-          "Only administrators can configure ticket panels."
-        );
-      }
-
-      const session = setupSessions.get(
-        `${interaction.guildId}:${interaction.user.id}`
-      );
-
-      if (!session) {
-        return privateReply(
-          interaction,
-          "Your setup session expired. Run `/ticket` again."
-        );
-      }
-
-      if (
-        interaction.customId === "ticket_setup_panel_channel"
-      ) {
-        session.panelChannelId = interaction.values[0];
-      }
-
-      if (interaction.customId === "ticket_setup_category") {
-        session.categoryId = interaction.values[0];
-      }
-
-      if (
-        interaction.customId === "ticket_setup_logs_channel"
-      ) {
-        session.logsChannelId = interaction.values[0];
-      }
-
-      const labels = {
-        ticket_setup_panel_channel: "Panel channel",
-        ticket_setup_category: "Ticket category",
-        ticket_setup_logs_channel: "Logs channel",
-      };
-
-      return privateReply(
-        interaction,
-        `**${labels[interaction.customId]} selected.** <#${interaction.values[0]}>`
-      );
-    }
-
-    // --------------------------------------------------
-    // CONFIRM OR CANCEL TICKET SETUP
-    // --------------------------------------------------
-
-    if (
-      interaction.isButton() &&
-      [
-        "ticket_setup_confirm",
-        "ticket_setup_cancel",
-      ].includes(interaction.customId)
-    ) {
-      if (!isAdmin(interaction)) {
-        return privateReply(
-          interaction,
-          "Only administrators can configure ticket panels."
-        );
-      }
-
-      const key = `${interaction.guildId}:${interaction.user.id}`;
-      const session = setupSessions.get(key);
-
-      if (!session) {
-        return privateReply(
-          interaction,
-          "Your setup session expired. Run `/ticket` again."
-        );
-      }
-
-      if (interaction.customId === "ticket_setup_cancel") {
-        setupSessions.delete(key);
-
-        return privateReply(
-          interaction,
-          "Ticket setup cancelled."
-        );
-      }
-
-      if (
-        !session.type ||
-        !session.panelChannelId ||
-        !session.categoryId ||
-        !session.logsChannelId
-      ) {
-        return privateReply(
-          interaction,
-          "Setup is incomplete. Choose a panel type, panel channel, ticket category and logs channel before confirming."
-        );
-      }
-
-      const guild = interaction.guild;
-
-      const panelChannel = await guild.channels
-        .fetch(session.panelChannelId)
-        .catch(() => null);
-
-      const category = await guild.channels
-        .fetch(session.categoryId)
-        .catch(() => null);
-
-      const logsChannel = await guild.channels
-        .fetch(session.logsChannelId)
-        .catch(() => null);
-
-      if (
-        !panelChannel ||
-        panelChannel.type !== ChannelType.GuildText ||
-        !category ||
-        category.type !== ChannelType.GuildCategory ||
-        !logsChannel ||
-        logsChannel.type !== ChannelType.GuildText
-      ) {
-        return privateReply(
-          interaction,
-          "One of the selected channels is unavailable. Run `/ticket` again and choose valid channels."
-        );
-      }
-
-      const botMember = await guild.members.fetchMe();
-
-      const panelPermissions =
-        panelChannel.permissionsFor(botMember);
-
-      if (
-        !panelPermissions?.has([
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-        ])
-      ) {
-        return privateReply(
-          interaction,
-          "I cannot post in that panel channel. Give me View Channel and Send Messages permissions there."
-        );
-      }
-
-      const type = TICKET_TYPES[session.type];
-
-      const openButton = makeButton(
-        `ticket_open_${session.type}`,
-        type.button,
-        ButtonStyle.Primary
-      );
-
-      try {
-        /*
-         * THIS IS THE MAIN FIX.
-         *
-         * The heading, description, instructions and button
-         * are all included in ONE Components V2 container.
-         * The button is not sent as a separate message.
-         */
-
-        const ticketPanel = v2WithRows(
-          [
-            `# ${type.label}`,
-            "**LONDON, UXBRIDGE | SUPPORT CENTRE**",
-            type.description,
-            " ",
-            "### Before opening a ticket",
-            type.guidance,
-            " ",
-            "**What happens next?**",
-            "Your ticket will be private to you and the authorised support team.",
-            "Please do not open duplicate tickets for the same issue.",
-            " ",
-            "Select the button below when you are ready.",
-          ],
-          [
-            new ActionRowBuilder().addComponents(openButton),
+        await channel.send({
+          embeds: [
+            embed("London, Uxbridge | Announcement", message)
           ]
-        );
+        });
 
-        await panelChannel.send(ticketPanel);
-      } catch (error) {
-        console.error("Could not post ticket panel:", error);
-
-        return privateReply(
-          interaction,
-          "I could not post the panel. Check my permissions in the selected channel and check the hosting logs."
-        );
+        return privateReply(interaction, "Announcement Posted", `Published in <#${channel.id}>.`);
       }
-
-      data.ticketConfigs[guild.id] ??= {};
-
-      data.ticketConfigs[guild.id][session.type] = {
-        panelChannelId: session.panelChannelId,
-        categoryId: session.categoryId,
-        logsChannelId: session.logsChannelId,
-      };
-
-      saveData();
-      setupSessions.delete(key);
-
-      return privateReply(
-        interaction,
-        "## Ticket Setup Complete",
-        `**Panel:** ${type.label}`,
-        `**Panel channel:** <#${panelChannel.id}>`,
-        `**Ticket category:** <#${category.id}>`,
-        `**Logs channel:** <#${logsChannel.id}>`,
-        "Your ticket panel has been published. Run `/ticket` again to configure another panel type."
-      );
     }
 
-    // --------------------------------------------------
-    // INFORMATION DROPDOWN
-    // --------------------------------------------------
+    /* -----------------------------------------------
+       INFORMATION DROPDOWN
+    ----------------------------------------------- */
 
     if (
       interaction.isStringSelectMenu() &&
       interaction.customId === "community_information"
     ) {
-      const sections = {
+      const pages = {
         information: [
-          "## About London, Uxbridge",
-          "A British Roblox roleplay community aiming to provide organised, enjoyable and realistic roleplay.",
+          "**About London, Uxbridge**",
+          "London, Uxbridge is a British Roblox roleplay community based around Uxbridge and West London.",
+          "Our goal is to provide organised, enjoyable and realistic roleplay, with opportunities for civilians, emergency services, public services and military personnel.",
+          "Members are expected to contribute positively and respect fellow players."
         ],
-
         server_rules: [
-          "## Server Rules",
-          "1. Treat members respectfully.",
-          "2. Do not harass, threaten or discriminate against others.",
-          "3. Do not spam or disrupt channels.",
-          "4. Follow staff instructions.",
-          "5. Do not share private information without permission.",
-          "6. Use the appropriate channels for support.",
+          "**Server Rules**",
+          "1. Treat members and staff respectfully.",
+          "2. Do not harass, bully, threaten or discriminate against others.",
+          "3. Do not spam, flood channels or misuse pings.",
+          "4. Do not advertise without permission.",
+          "5. Do not evade moderation or exploit loopholes.",
+          "6. Follow Discord's Terms of Service and Community Guidelines.",
+          "7. Follow instructions from authorised staff."
         ],
-
         game_rules: [
-          "## Game Rules",
-          "1. Keep roleplay appropriate and realistic.",
-          "2. Do not exploit or cheat.",
-          "3. Do not disrupt other players' roleplay.",
-          "4. Follow department procedures.",
-          "5. Do not impersonate staff.",
+          "**Game Rules**",
+          "1. Keep roleplay realistic and appropriate to the scene.",
+          "2. No random deathmatch or random killing.",
+          "3. No exploiting, cheating or abusing game mechanics.",
+          "4. Do not powergame or force outcomes on other players.",
+          "5. Follow department procedures and roleplay instructions.",
+          "6. Do not impersonate staff or emergency personnel.",
+          "7. Follow server staff instructions during events and operations."
         ],
-
         departments: [
-          "## Departments",
-          "Information about departments, applications and requirements will be published by authorised community staff.",
+          "**Departments**",
+          "**Civilian Operations:** Everyday life and civilian roleplay.",
+          "**Emergency Services:** Public safety and emergency response roleplay.",
+          "**Public Services:** Community-facing services and local operations.",
+          "**Military:** Organised military roleplay and approved operations.",
+          "Department availability, requirements and recruitment may change. Check official announcements for current information."
         ],
-
         disclaimer: [
-          "## Disclaimer",
-          "London, Uxbridge is an independent Roblox roleplay community. It is not affiliated with or endorsed by the real London Borough of Hillingdon, the Metropolitan Police Service, the London Fire Brigade, the NHS or any other real-world public authority.",
-          "Roleplay activities are fictional and for entertainment.",
-        ],
+          "**Disclaimer**",
+          "London, Uxbridge is a community roleplay project associated with Roblox.",
+          "Unless explicitly stated otherwise, it is not an official UK government organisation, emergency service, military organisation or Roblox-affiliated entity.",
+          "Roleplay scenarios are fictional. Do not treat them as real emergency instructions.",
+          "Community rules and department arrangements may be updated by authorised staff."
+        ]
       };
 
-      const selected = sections[interaction.values[0]];
+      const selected = pages[interaction.values[0]];
 
       if (!selected) {
-        return privateReply(
-          interaction,
-          "That information section could not be found."
-        );
+        return privateReply(interaction, "Section Not Found", "Please select a valid information section.");
       }
 
-      return privateReply(interaction, ...selected);
+      return interaction.reply({
+        embeds: [
+          embed("London, Uxbridge | Community Guide", selected.join("\n\n"))
+        ],
+        ephemeral: true
+      });
     }
 
-    // --------------------------------------------------
-    // OPEN A PRIVATE TICKET
-    // --------------------------------------------------
+    /* -----------------------------------------------
+       TICKET TYPE MENU
+    ----------------------------------------------- */
 
     if (
-      interaction.isButton() &&
-      interaction.customId.startsWith("ticket_open_")
+      interaction.isStringSelectMenu() &&
+      interaction.customId === "ticket_type_select"
     ) {
       const guild = interaction.guild;
       const user = interaction.user;
+      const selectedType = interaction.values[0];
+      const typeInfo = TICKET_TYPES[selectedType];
 
-      const typeKey = interaction.customId.replace(
-        "ticket_open_",
-        ""
-      );
+      if (!guild || !typeInfo) {
+        return privateReply(interaction, "Ticket Error", "The selected ticket type is invalid.");
+      }
 
-      const type = TICKET_TYPES[typeKey];
-      const config = getConfig(guild.id)?.[typeKey];
+      const member = await guild.members.fetch(user.id).catch(() => null);
 
-      if (!type || !config) {
+      if (isBlacklisted(guild.id, user.id, member)) {
         return privateReply(
           interaction,
-          "This ticket panel is not configured correctly. Ask an administrator to run `/ticket` again."
+          "Ticket Access Restricted",
+          "You cannot open tickets in this server. If you believe this is a mistake, contact the support team through an approved alternative."
         );
+      }
+
+      const config = getConfig(guild.id);
+
+      if (!config) {
+        return privateReply(interaction, "Ticket System Not Configured", "An administrator must configure the ticket system first.");
       }
 
       const existing = Object.values(data.tickets).find(
-        (ticket) =>
-          ticket.guildId === guild.id &&
-          ticket.userId === user.id &&
-          !ticket.closed
+        ticket => ticket.guildId === guild.id && ticket.userId === user.id && !ticket.closed
       );
 
       if (existing) {
-        const existingChannel = await guild.channels
-          .fetch(existing.channelId)
-          .catch(() => null);
-
-        if (existingChannel) {
-          return privateReply(
-            interaction,
-            `You already have an open ticket: <#${existingChannel.id}>`
-          );
-        }
-
-        delete data.tickets[existing.channelId];
-        saveData();
+        return privateReply(interaction, "Ticket Already Open", `You already have an open ticket: <#${existing.channelId}>.`);
       }
 
-      await interaction.deferReply({
-        flags:
-          MessageFlags.Ephemeral |
-          MessageFlags.IsComponentsV2,
-      });
-
-      const category = await guild.channels
-        .fetch(config.categoryId)
-        .catch(() => null);
-
-      if (
-        !category ||
-        category.type !== ChannelType.GuildCategory
-      ) {
-        return interaction.editReply(
-          privateV2(
-            "The configured ticket category no longer exists. Ask an administrator to run `/ticket` again."
-          )
-        );
-      }
-
-      const ticketNumber = data.nextTicketNumber++;
-      const username = slugify(user.username);
-
-      const baseName =
-        `${type.slug}-${username}`.slice(0, 90);
-
-      let ticketName = baseName;
-      let suffix = 2;
-
-      while (
-        guild.channels.cache.some(
-          (channel) =>
-            channel.parentId === category.id &&
-            channel.name === ticketName
-        )
-      ) {
-        ticketName =
-          `${baseName.slice(0, 85)}-${suffix++}`;
-      }
-
-      const overwrites = [
-        {
-          id: guild.roles.everyone.id,
-          deny: [PermissionFlagsBits.ViewChannel],
-        },
-        {
-          id: user.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.AttachFiles,
-            PermissionFlagsBits.EmbedLinks,
-          ],
-        },
-        {
-          id: client.user.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.ManageChannels,
-            PermissionFlagsBits.ManageMessages,
-          ],
-        },
-      ];
-
-      const supportRole =
-        guild.roles.cache.get(SUPPORT_ROLE_ID);
-
-      const escalationRole =
-        guild.roles.cache.get(ESCALATION_ROLE_ID);
-
-      if (supportRole) {
-        overwrites.push({
-          id: supportRole.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.AttachFiles,
-          ],
-        });
-      }
-
-      if (escalationRole) {
-        overwrites.push({
-          id: escalationRole.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.ReadMessageHistory,
-          ],
-          deny: [PermissionFlagsBits.SendMessages],
-        });
-      }
-
-      let channel;
+      await interaction.deferReply({ ephemeral: true });
 
       try {
-        channel = await guild.channels.create({
-          name: ticketName,
-          type: ChannelType.GuildText,
-          parent: category.id,
-          topic: `Ticket #${ticketNumber} | ${type.label} | Opened by ${user.tag}`,
-          permissionOverwrites: overwrites,
-        });
-      } catch (error) {
-        console.error("Ticket channel creation failed:", error);
+        const category = await guild.channels.fetch(config.categoryId).catch(() => null);
 
-        return interaction.editReply(
-          privateV2(
-            "I couldn't create the private ticket. Check my Manage Channels permission and the category permissions."
-          )
-        );
-      }
-
-      const ticket = {
-        channelId: channel.id,
-        guildId: guild.id,
-        userId: user.id,
-        ticketNumber,
-        type: typeKey,
-        createdAt: Date.now(),
-        claimedBy: null,
-        closed: false,
-        escalated: false,
-        lastAction: "Ticket opened",
-      };
-
-      data.tickets[channel.id] = ticket;
-      saveData();
-
-      const controls = new ActionRowBuilder().addComponents(
-        makeButton(
-          "ticket_claim",
-          "Claim Ticket",
-          ButtonStyle.Primary
-        ),
-        makeButton(
-          "ticket_close",
-          "Close Ticket",
-          ButtonStyle.Danger
-        ),
-        makeButton(
-          "ticket_modpanel",
-          "Staff Tools",
-          ButtonStyle.Secondary
-        )
-      );
-
-      /*
-       * The ticket welcome text and management controls
-       * are also placed together in one Components V2 panel.
-       */
-
-      await channel.send({
-        ...v2WithRows(
-          [
-            `# ${type.label}`,
-            `## Welcome, ${user.username}`,
-            "Your private ticket is now open. A member of the support team will assist you as soon as possible.",
-            `**Ticket number:** #${ticketNumber}`,
-            " ",
-            "### What happens next?",
-            type.intro,
-            " ",
-            "### Please include",
-            type.guidance,
-            " ",
-            "Keep all details and evidence in this channel. Please be patient while staff review your ticket.",
-            `**Ticket owner:** <@${user.id}>`,
-          ],
-          [controls]
-        ),
-        allowedMentions: {
-          users: [user.id],
-        },
-      });
-
-      if (supportRole) {
-        await channel.send({
-          ...v2(
-            `Support team notified: <@&${supportRole.id}>`
-          ),
-          allowedMentions: {
-            roles: [supportRole.id],
-          },
-        }).catch(console.error);
-      }
-
-      await createTicketLog(
-        guild,
-        ticket,
-        config.logsChannelId
-      );
-
-      return interaction.editReply(
-        privateV2(
-          `Your ${type.label} ticket has been created.`,
-          `Head to your ticket at <#${channel.id}>.`
-        )
-      );
-    }
-
-    // --------------------------------------------------
-    // TICKET MANAGEMENT BUTTONS
-    // --------------------------------------------------
-
-    if (
-      interaction.isButton() &&
-      [
-        "ticket_claim",
-        "ticket_close",
-        "ticket_modpanel",
-        "ticket_rename",
-        "ticket_unclaim",
-        "ticket_escalate",
-      ].includes(interaction.customId)
-    ) {
-      const ticket = getTicket(interaction.channelId);
-
-      if (
-        !ticket ||
-        ticket.guildId !== interaction.guildId
-      ) {
-        return privateReply(
-          interaction,
-          "This ticket could not be found."
-        );
-      }
-
-      if (!isStaff(interaction)) {
-        return privateReply(
-          interaction,
-          "Only authorised support staff can use these controls."
-        );
-      }
-
-      // CLAIM TICKET
-
-      if (interaction.customId === "ticket_claim") {
-        if (ticket.closed) {
-          return privateReply(
-            interaction,
-            "This ticket is closed."
-          );
+        if (!category || category.type !== ChannelType.GuildCategory) {
+          return interaction.editReply({
+            embeds: [embed("Ticket Setup Error", "The configured ticket category no longer exists. Ask an administrator to run `/ticket` again.")]
+          });
         }
 
-        if (ticket.claimedBy) {
-          return privateReply(
-            interaction,
-            `This ticket is already claimed by <@${ticket.claimedBy}>.`
-          );
+        const me = await guild.members.fetchMe();
+
+        const permissionOverwrites = [
+          {
+            id: guild.roles.everyone.id,
+            deny: [P.ViewChannel]
+          },
+          {
+            id: user.id,
+            allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AttachFiles]
+          },
+          {
+            id: me.id,
+            allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.ManageChannels]
+          }
+        ];
+
+        for (const roleId of [SUPPORT_ROLE_ID, ESCALATION_ROLE_ID]) {
+          const role = guild.roles.cache.get(roleId);
+          if (role) {
+            permissionOverwrites.push({
+              id: roleId,
+              allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory]
+            });
+          }
+        }
+
+        const channel = await guild.channels.create({
+          name: `${selectedType}-${user.username}`
+            .toLowerCase()
+            .replace(/[^a-z0-9-]/g, "")
+            .slice(0, 90),
+          type: ChannelType.GuildText,
+          parent: category.id,
+          permissionOverwrites
+        });
+
+        const ticket = {
+          guildId: guild.id,
+          channelId: channel.id,
+          userId: user.id,
+          type: selectedType,
+          claimedBy: null,
+          closed: false,
+          createdAt: Date.now()
+        };
+
+        data.tickets[ticketKey(guild.id, channel.id)] = ticket;
+        saveData();
+
+        const staffTools = new ActionRowBuilder().addComponents(
+          makeButton("ticket_claim", "Claim", ButtonStyle.Primary),
+          makeButton("ticket_escalate", "Escalate", ButtonStyle.Secondary),
+          makeButton("ticket_blacklist", "Blacklist User", ButtonStyle.Danger),
+          makeButton("ticket_rename", "Rename", ButtonStyle.Secondary),
+          makeButton("ticket_close", "Close Ticket", ButtonStyle.Danger)
+        );
+
+        await channel.send({
+          content: `${user} <@&${SUPPORT_ROLE_ID}>`,
+          embeds: [
+            embed(
+              `Support Ticket | ${typeInfo.label}`,
+              [
+                `Welcome ${user}. A member of the support team will assist you.`,
+                "",
+                `**Ticket owner:** ${user}`,
+                `**Ticket type:** ${typeInfo.label}`,
+                `**Created:** <t:${Math.floor(ticket.createdAt / 1000)}:F>`,
+                "",
+                "**Please explain your issue clearly.** Include relevant details and evidence where appropriate.",
+                "",
+                "**Staff Tools:** Only authorised staff should use the buttons below."
+              ].join("\n"),
+              typeInfo.color
+            )
+          ],
+          components: [staffTools]
+        });
+
+        await sendTicketLog(guild, ticket, "Ticket created.");
+
+        return interaction.editReply({
+          embeds: [embed("Ticket Created", `Your private ticket is ready: <#${channel.id}>.`)]
+        });
+      } catch (error) {
+        console.error("TICKET CREATION FAILED:", error);
+
+        return interaction.editReply({
+          embeds: [
+            embed(
+              "Ticket Creation Failed",
+              `The ticket could not be created.\n\n**Error:** ${String(error.message || error).slice(0, 700)}`
+            )
+          ]
+        });
+      }
+    }
+
+    /* -----------------------------------------------
+       TICKET BUTTONS
+    ----------------------------------------------- */
+
+    if (interaction.isButton() && interaction.customId.startsWith("ticket_")) {
+      const guild = interaction.guild;
+
+      if (!guild) {
+        return privateReply(interaction, "Server Only", "This button must be used inside the server.");
+      }
+
+      const ticket = getTicket(guild.id, interaction.channelId);
+
+      if (!ticket || ticket.closed) {
+        return privateReply(interaction, "Ticket Not Found", "This ticket is closed or is no longer registered.");
+      }
+
+      const staffOnly = [
+        "ticket_claim",
+        "ticket_escalate",
+        "ticket_blacklist",
+        "ticket_rename",
+        "ticket_close"
+      ];
+
+      if (staffOnly.includes(interaction.customId) && !isStaff(interaction)) {
+        return privateReply(interaction, "Permission Denied", "Only authorised support staff can use this tool.");
+      }
+
+      /* CLAIM */
+
+      if (interaction.customId === "ticket_claim") {
+        if (ticket.claimedBy && ticket.claimedBy !== interaction.user.id) {
+          return privateReply(interaction, "Already Claimed", `This ticket is claimed by <@${ticket.claimedBy}>.`);
         }
 
         ticket.claimedBy = interaction.user.id;
-        ticket.updatedAt = Date.now();
-
         saveData();
 
-        await interaction.channel.send(
-          v2(
-            "## Ticket Claimed",
-            `This ticket has been claimed by ${interaction.user}.`
-          )
-        );
+        await sendTicketLog(guild, ticket, `Claimed by ${interaction.user.tag}.`);
 
-        await sendTicketLog(
-          interaction.guild,
-          ticket,
-          `Ticket claimed by ${interaction.user.tag}`
-        );
-
-        return privateReply(
-          interaction,
-          "You have claimed this ticket."
-        );
+        return interaction.reply({
+          embeds: [embed("Ticket Claimed", `This ticket is now being handled by ${interaction.user}.`)]
+        });
       }
 
-      // CLOSE TICKET
+      /* ESCALATE */
 
-      if (interaction.customId === "ticket_close") {
-        if (ticket.closed) {
-          return privateReply(
-            interaction,
-            "This ticket is already closed."
-          );
+      if (interaction.customId === "ticket_escalate") {
+        const role = guild.roles.cache.get(ESCALATION_ROLE_ID);
+
+        if (!role) {
+          return privateReply(interaction, "Escalation Role Missing", "The configured escalation role does not exist.");
         }
 
-        ticket.closed = true;
-        ticket.closedAt = Date.now();
-        ticket.closedBy = interaction.user.id;
-        ticket.updatedAt = Date.now();
+        await interaction.channel.permissionOverwrites.edit(role.id, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true
+        });
 
-        saveData();
+        await interaction.channel.send({
+          content: `<@&${ESCALATION_ROLE_ID}>`,
+          embeds: [embed("Ticket Escalated", `Escalated by ${interaction.user}. An escalation team member has been notified.`)]
+        });
 
-        await interaction.channel.permissionOverwrites
-          .edit(ticket.userId, {
-            SendMessages: false,
-            ViewChannel: true,
-          })
-          .catch(console.error);
+        await sendTicketLog(guild, ticket, `Escalated by ${interaction.user.tag}.`);
 
-        const ticketOwner = await client.users
-          .fetch(ticket.userId)
-          .catch(() => null);
-
-        await interaction.channel
-          .setName(
-            `closed-${ticket.type}-${slugify(
-              ticketOwner?.username || "ticket"
-            )}`.slice(0, 95)
-          )
-          .catch(console.error);
-
-        await interaction.channel.send(
-          v2(
-            "## Ticket Closed",
-            `This ticket was closed by ${interaction.user}.`,
-            "The ticket owner can no longer send messages. Staff can reopen it by editing the channel permissions if needed."
-          )
-        );
-
-        await sendTicketLog(
-          interaction.guild,
-          ticket,
-          `Ticket closed by ${interaction.user.tag}`
-        );
-
-        return privateReply(
-          interaction,
-          "The ticket has been closed."
-        );
+        return privateReply(interaction, "Ticket Escalated", "The escalation role has been notified.");
       }
 
-      // STAFF TOOLS
+      /* BLACKLIST */
 
-      if (interaction.customId === "ticket_modpanel") {
-        const controls = new ActionRowBuilder().addComponents(
-          makeButton(
-            "ticket_rename",
-            "Rename Ticket"
-          ),
-          makeButton(
-            "ticket_unclaim",
-            "Unclaim",
-            ButtonStyle.Secondary
-          ),
-          makeButton(
-            "ticket_escalate",
-            "Escalate",
-            ButtonStyle.Primary
-          )
-        );
+      if (interaction.customId === "ticket_blacklist") {
+        await interaction.deferReply({ ephemeral: true });
 
-        return interaction.reply(
-          v2WithRows(
-            [
-              "## Ticket Staff Tools",
-              "Choose an action for this ticket.",
-            ],
-            [controls],
-            true
-          )
-        );
+        try {
+          const owner = await guild.members.fetch(ticket.userId).catch(() => null);
+
+          data.blacklistedUsers[guild.id] ??= {};
+          data.blacklistedUsers[guild.id][ticket.userId] = {
+            moderatorId: interaction.user.id,
+            timestamp: Date.now(),
+            reason: "Blacklisted through ticket staff tools"
+          };
+
+          if (owner) {
+            const role = guild.roles.cache.get(TICKET_BLACKLIST_ROLE_ID);
+
+            if (!role) {
+              delete data.blacklistedUsers[guild.id][ticket.userId];
+              saveData();
+
+              return interaction.editReply({
+                embeds: [embed("Blacklist Role Missing", `I cannot find the blacklist role \`${TICKET_BLACKLIST_ROLE_ID}\` in this server.`)]
+              });
+            }
+
+            const botMember = await guild.members.fetchMe();
+
+            if (
+              !botMember.permissions.has(P.ManageRoles) ||
+              role.position >= botMember.roles.highest.position
+            ) {
+              delete data.blacklistedUsers[guild.id][ticket.userId];
+              saveData();
+
+              return interaction.editReply({
+                embeds: [
+                  embed(
+                    "Cannot Assign Blacklist Role",
+                    "Give the bot **Manage Roles** and move its highest role above the blacklist role. The blacklist was not applied."
+                  )
+                ]
+              });
+            }
+
+            await owner.roles.add(role, `Ticket blacklist applied by ${interaction.user.tag}`);
+          }
+
+          saveData();
+
+          await interaction.channel.send({
+            embeds: [
+              embed(
+                "Ticket Access Restricted",
+                `The ticket owner <@${ticket.userId}> has been blacklisted from opening new tickets by ${interaction.user}.`,
+                0xC0392B
+              )
+            ]
+          });
+
+          await sendTicketLog(guild, ticket, `Owner blacklisted by ${interaction.user.tag}.`);
+
+          return interaction.editReply({
+            embeds: [
+              embed(
+                "User Blacklisted",
+                `The blacklist has been saved for <@${ticket.userId}>. They will be prevented from opening tickets in this server.`
+              )
+            ]
+          });
+        } catch (error) {
+          console.error("TICKET BLACKLIST ERROR:", error);
+
+          return interaction.editReply({
+            embeds: [
+              embed(
+                "Blacklist Failed",
+                `Discord rejected the action. Check Manage Roles and role hierarchy.\n\n${String(error.message || error).slice(0, 500)}`
+              )
+            ]
+          });
+        }
       }
 
-      // RENAME TICKET MODAL
+      /* RENAME */
 
       if (interaction.customId === "ticket_rename") {
         const modal = new ModalBuilder()
           .setCustomId("ticket_rename_modal")
-          .setTitle("Rename Ticket")
-          .addComponents(
-            new ActionRowBuilder().addComponents(
-              new TextInputBuilder()
-                .setCustomId("new_name")
-                .setLabel("New channel name")
-                .setStyle(TextInputStyle.Short)
-                .setRequired(true)
-                .setMaxLength(90)
-            )
-          );
+          .setTitle("Rename Ticket");
+
+        const nameInput = new TextInputBuilder()
+          .setCustomId("new_name")
+          .setLabel("New channel name")
+          .setStyle(TextInputStyle.Short)
+          .setMinLength(2)
+          .setMaxLength(90)
+          .setRequired(true)
+          .setValue(interaction.channel.name);
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(nameInput)
+        );
 
         return interaction.showModal(modal);
       }
 
-      // UNCLAIM TICKET
+      /* CLOSE */
 
-      if (interaction.customId === "ticket_unclaim") {
-        if (ticket.closed) {
-          return privateReply(
-            interaction,
-            "This ticket is closed."
-          );
-        }
+      if (interaction.customId === "ticket_close") {
+        await interaction.deferReply({ ephemeral: true });
 
-        ticket.claimedBy = null;
-        ticket.updatedAt = Date.now();
-
+        ticket.closed = true;
+        ticket.closedAt = Date.now();
+        ticket.closedBy = interaction.user.id;
         saveData();
 
-        await sendTicketLog(
-          interaction.guild,
-          ticket,
-          `Ticket unclaimed by ${interaction.user.tag}`
-        );
-
-        return privateReply(
-          interaction,
-          "The ticket has been unclaimed."
-        );
-      }
-
-      // ESCALATE TICKET
-
-      if (interaction.customId === "ticket_escalate") {
-        const role = interaction.guild.roles.cache.get(
-          ESCALATION_ROLE_ID
-        );
-
-        if (!role) {
-          return privateReply(
-            interaction,
-            "The escalation role was not found. Check the role ID in index.js."
-          );
-        }
-
-        await interaction.channel.permissionOverwrites.edit(
-          role.id,
-          {
-            ViewChannel: true,
-            SendMessages: true,
-            ReadMessageHistory: true,
-          }
-        );
-
-        ticket.escalated = true;
-        ticket.updatedAt = Date.now();
-
-        saveData();
-
-        await interaction.channel.send(
-          v2(
-            "## Ticket Escalated",
-            `This ticket has been escalated by ${interaction.user}.`
-          )
-        );
+        await sendTicketLog(guild, ticket, `Closed by ${interaction.user.tag}.`);
 
         await interaction.channel.send({
-          ...v2(
-            `Escalation team notified: <@&${role.id}>`
-          ),
-          allowedMentions: {
-            roles: [role.id],
-          },
-        }).catch(console.error);
+          embeds: [
+            embed(
+              "Ticket Closed",
+              `Closed by ${interaction.user}.\nThis channel will be deleted in 10 seconds.`
+            )
+          ],
+          components: []
+        });
 
-        await sendTicketLog(
-          interaction.guild,
-          ticket,
-          `Ticket escalated by ${interaction.user.tag}`
-        );
+        await interaction.editReply({
+          embeds: [embed("Ticket Closed", "The ticket has been marked as closed.")]
+        });
 
-        return privateReply(
-          interaction,
-          "The ticket has been escalated."
-        );
+        setTimeout(async () => {
+          try {
+            await interaction.channel.delete("Ticket closed");
+          } catch (error) {
+            console.error("TICKET CHANNEL DELETE ERROR:", error);
+          }
+
+          delete data.tickets[ticketKey(guild.id, ticket.channelId)];
+          saveData();
+        }, 10000);
       }
     }
 
-    // --------------------------------------------------
-    // RENAME MODAL SUBMISSION
-    // --------------------------------------------------
+    /* -----------------------------------------------
+       TICKET RENAME MODAL
+    ----------------------------------------------- */
 
     if (
       interaction.isModalSubmit() &&
       interaction.customId === "ticket_rename_modal"
     ) {
-      const ticket = getTicket(interaction.channelId);
-
-      if (!ticket || !isStaff(interaction)) {
-        return privateReply(
-          interaction,
-          "You cannot rename this ticket."
-        );
+      if (!interaction.guild || !isStaff(interaction)) {
+        return privateReply(interaction, "Permission Denied", "Only support staff can rename tickets.");
       }
 
-      const newName = slugify(
-        interaction.fields.getTextInputValue("new_name")
-      ).slice(0, 90);
+      const ticket = getTicket(interaction.guild.id, interaction.channelId);
 
-      if (!newName) {
-        return privateReply(
-          interaction,
-          "Please enter a valid channel name."
-        );
+      if (!ticket || ticket.closed) {
+        return privateReply(interaction, "Ticket Not Found", "This ticket is closed or unregistered.");
+      }
+
+      const newName = interaction.fields
+        .getTextInputValue("new_name")
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 90);
+
+      if (newName.length < 2) {
+        return privateReply(interaction, "Invalid Name", "Please enter a longer channel name.");
       }
 
       await interaction.channel.setName(newName);
@@ -2060,75 +1507,80 @@ client.on("interactionCreate", async (interaction) => {
       await sendTicketLog(
         interaction.guild,
         ticket,
-        `Ticket renamed to ${newName} by ${interaction.user.tag}`
+        `Channel renamed to ${newName} by ${interaction.user.tag}.`
       );
 
-      return privateReply(
-        interaction,
-        `Ticket renamed to **${newName}**.`
-      );
+      return privateReply(interaction, "Ticket Renamed", `New name: **${newName}**.`);
     }
+
+    /* -----------------------------------------------
+       ERROR HANDLING
+    ----------------------------------------------- */
+
   } catch (error) {
-    console.error("Interaction error:", error);
+    console.error("INTERACTION ERROR:", error);
+
+    const message = {
+      embeds: [
+        embed(
+          "Something Went Wrong",
+          "An error occurred while processing your request. Please check the bot logs or contact an administrator."
+        )
+      ],
+      ephemeral: true
+    };
 
     try {
-      if (interaction.deferred || interaction.replied) {
-        await interaction.followUp(
-          privateV2(
-            "Something went wrong. Please check the hosting logs."
-          )
-        );
+      if (interaction.deferred) {
+        await interaction.editReply(message);
+      } else if (interaction.replied) {
+        await interaction.followUp(message);
       } else {
-        await interaction.reply(
-          privateV2(
-            "Something went wrong. Please check the hosting logs."
-          )
-        );
+        await interaction.reply(message);
       }
     } catch (replyError) {
-      console.error(
-        "Could not send error response:",
-        replyError
-      );
+      console.error("COULD NOT SEND ERROR RESPONSE:", replyError);
     }
   }
 });
 
-// ==================================================
-// AUTOMATIC SHIFT AND OPERATION EXPIRY
-// ==================================================
+/* ==================================================
+   AUTOMATIC SHIFT AND OPERATION EXPIRY
+================================================== */
 
 setInterval(() => {
   const now = Date.now();
   let changed = false;
 
   for (const [guildId, shift] of Object.entries(data.shifts)) {
-    if (
-      shift &&
-      now - shift.startedAt >= 60 * 60 * 1000
-    ) {
+    if (now - shift.startedAt >= 60 * 60 * 1000) {
       delete data.shifts[guildId];
+      console.log(`Staff shift expired for guild ${guildId}.`);
       changed = true;
     }
   }
 
   for (const [guildId, operation] of Object.entries(data.operations)) {
-    if (
-      operation &&
-      now - operation.startedAt >= 60 * 60 * 1000
-    ) {
+    if (now - operation.startedAt >= 60 * 60 * 1000) {
       delete data.operations[guildId];
+      console.log(`Military operation expired for guild ${guildId}.`);
       changed = true;
     }
   }
 
-  if (changed) {
-    saveData();
-  }
+  if (changed) saveData();
 }, 60 * 1000);
 
-// ==================================================
-// START BOT
-// ==================================================
+/* ==================================================
+   START BOT
+================================================== */
+
+client.on("error", error => {
+  console.error("DISCORD CLIENT ERROR:", error);
+});
+
+process.on("unhandledRejection", error => {
+  console.error("UNHANDLED PROMISE REJECTION:", error);
+});
 
 client.login(TOKEN);
