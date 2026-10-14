@@ -1,4 +1,3 @@
-
 const {
   Client,
   GatewayIntentBits,
@@ -14,9 +13,7 @@ const {
   StringSelectMenuBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ChannelType,
-  MediaGalleryBuilder,
-  MediaGalleryItemBuilder
+  ChannelType
 } = require("discord.js");
 
 require("dotenv").config();
@@ -24,21 +21,17 @@ require("dotenv").config();
 const fs = require("node:fs");
 const path = require("node:path");
 
-// ==================================================
-// CONFIGURATION
-// ==================================================
-
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
 
-const BRAND_NAME = "Rover";
-const BRAND_COLOR = 0x8B70C8;
-const GIVEAWAY_DURATION = 24 * 60 * 60 * 1000;
-const PAGE_SIZE = 25;
-
+const BRAND = "Rover";
+const FOOTER = "Rover Official Store";
+const BRAND_COLOUR = "#8B70C8";
 const DATA_DIR = path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "bot-data.json");
+
+const PAGE_SIZE = 25;
 
 if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
   console.error(
@@ -47,96 +40,79 @@ if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
   process.exit(1);
 }
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
-
-// ==================================================
-// DATA STORAGE
-// ==================================================
-
-function loadData() {
-  try {
-    if (!fs.existsSync(DATA_FILE)) return {};
-
-    return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-  } catch (error) {
-    console.error("Failed to load saved data:", error);
-    return {};
-  }
-}
-
-const saved = loadData();
-
-const data = {
-  products: Array.isArray(saved.products)
-    ? saved.products.map(product => ({
-        ...product,
-        imageUrl: product.imageUrl || ""
-      }))
-    : [],
-
-  giveaways: Array.isArray(saved.giveaways)
-    ? saved.giveaways.map(giveaway => ({
-        ...giveaway,
-        entries: Array.isArray(giveaway.entries)
-          ? giveaway.entries
-          : [],
-        ended: Boolean(giveaway.ended)
-      }))
-    : [],
-
-  nextProductId: Math.max(
-    Number(saved.nextProductId) || 1,
-    (Array.isArray(saved.products)
-      ? saved.products.reduce(
-          (maximum, product) =>
-            Math.max(maximum, Number(product.id) || 0),
-          0
-        ) + 1
-      : 1)
-  )
-};
-
-function saveData() {
-  const temporaryFile = `${DATA_FILE}.tmp`;
-
-  fs.writeFileSync(
-    temporaryFile,
-    JSON.stringify(data, null, 2),
-    "utf8"
-  );
-
-  fs.renameSync(temporaryFile, DATA_FILE);
-}
-
-// ==================================================
-// CLIENT AND HELPERS
-// ==================================================
-
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
-const ADMIN = PermissionFlagsBits.Administrator;
-const COMPONENTS_V2 = MessageFlags.IsComponentsV2;
-const EPHEMERAL = MessageFlags.Ephemeral;
+const defaults = {
+  nextProductId: 1,
+  products: [],
+  giveaways: [],
+  deliveries: []
+};
 
-function isAdmin(interaction) {
-  return Boolean(interaction.memberPermissions?.has(ADMIN));
+function loadData() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+
+    if (!fs.existsSync(DATA_FILE)) {
+      fs.writeFileSync(
+        DATA_FILE,
+        JSON.stringify(defaults, null, 2)
+      );
+
+      return structuredClone(defaults);
+    }
+
+    const saved = JSON.parse(
+      fs.readFileSync(DATA_FILE, "utf8")
+    );
+
+    return {
+      ...structuredClone(defaults),
+      ...saved,
+      products: Array.isArray(saved.products)
+        ? saved.products
+        : [],
+      giveaways: Array.isArray(saved.giveaways)
+        ? saved.giveaways
+        : [],
+      deliveries: Array.isArray(saved.deliveries)
+        ? saved.deliveries
+        : []
+    };
+  } catch (error) {
+    console.error("Could not load bot data:", error);
+    process.exit(1);
+  }
 }
 
-function safeText(value, maximum = 1000) {
-  return String(value ?? "")
-    .replace(/@everyone/gi, "@\u200beveryone")
-    .replace(/@here/gi, "@\u200bhere")
-    .slice(0, maximum);
+let data = loadData();
+
+function saveData() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+
+    const temporaryFile = `${DATA_FILE}.tmp`;
+
+    fs.writeFileSync(
+      temporaryFile,
+      JSON.stringify(data, null, 2)
+    );
+
+    fs.renameSync(temporaryFile, DATA_FILE);
+  } catch (error) {
+    console.error("Could not save bot data:", error);
+    throw error;
+  }
 }
 
 function makePanel(title, sections = []) {
-  const container = new ContainerBuilder()
-    .setAccentColor(BRAND_COLOR)
-    .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(`# ${safeText(title, 200)}`)
-    );
+  const container = new ContainerBuilder();
+
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(`# ${title}`)
+  );
 
   for (const section of sections) {
     container.addSeparatorComponents(
@@ -144,9 +120,7 @@ function makePanel(title, sections = []) {
     );
 
     container.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        safeText(section, 4000)
-      )
+      new TextDisplayBuilder().setContent(section)
     );
   }
 
@@ -155,751 +129,824 @@ function makePanel(title, sections = []) {
   );
 
   container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent("-# Rover Official Store")
+    new TextDisplayBuilder().setContent(`-# ${FOOTER}`)
   );
 
   return container;
 }
 
-async function privatePanel(interaction, title, sections = []) {
-  const payload = {
-    components: [makePanel(title, sections)],
-    flags: COMPONENTS_V2 | EPHEMERAL
-  };
-
-  if (interaction.deferred || interaction.replied) {
-    return interaction.followUp(payload);
-  }
-
-  return interaction.reply(payload);
+async function panelReply(
+  interaction,
+  title,
+  sections = [],
+  ephemeral = false,
+  extraComponents = []
+) {
+  return interaction.reply({
+    components: [
+      makePanel(title, sections),
+      ...extraComponents
+    ],
+    flags:
+      MessageFlags.IsComponentsV2 |
+      (ephemeral ? MessageFlags.Ephemeral : 0)
+  });
 }
 
-function validateUrl(value) {
-  if (!value) return "";
+async function panelFollowUp(
+  interaction,
+  title,
+  sections = [],
+  ephemeral = true
+) {
+  return interaction.followUp({
+    components: [makePanel(title, sections)],
+    flags:
+      MessageFlags.IsComponentsV2 |
+      (ephemeral ? MessageFlags.Ephemeral : 0)
+  });
+}
+
+function isAdmin(member) {
+  return member.permissions.has(
+    PermissionFlagsBits.Administrator
+  ) || member.permissions.has(
+    PermissionFlagsBits.ManageGuild
+  );
+}
+
+async function requireAdmin(interaction) {
+  if (isAdmin(interaction.member)) {
+    return true;
+  }
+
+  await panelReply(
+    interaction,
+    "Permission required",
+    ["You need Manage Server or Administrator permission to use this command."],
+    true
+  );
+
+  return false;
+}
+
+function cleanText(value, maxLength = 1000) {
+  return String(value ?? "")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function validUrl(value) {
+  if (!value) return true;
 
   try {
     const url = new URL(value);
-
-    if (url.protocol !== "https:" && url.protocol !== "http:") {
-      return null;
-    }
-
-    return url.toString();
+    return url.protocol === "https:" ||
+      url.protocol === "http:";
   } catch {
-    return null;
+    return false;
   }
 }
 
 function getProduct(id) {
-  return data.products.find(product => product.id === Number(id));
+  return data.products.find(
+    product => String(product.id) === String(id)
+  );
+}
+
+function getActiveProducts() {
+  return data.products.filter(
+    product => product.active !== false
+  );
+}
+
+function formatPrice(price) {
+  return price || "Contact the store";
 }
 
 function formatProduct(product) {
-  return [
-    `**Product ID:** ${product.id}`,
-    `**Product:** ${safeText(product.name, 100)}`,
-    `**Price:** ${safeText(product.price, 50)}`,
-    `**Description:**\n${safeText(product.description, 1000)}`,
-    product.purchaseUrl
-      ? `**Purchase link:** ${product.purchaseUrl}`
-      : "**Purchase link:** Contact the shop team for purchasing instructions.",
-    product.asset
-      ? `**Delivery information:** ${safeText(product.asset, 500)}`
-      : null
-  ].filter(Boolean);
-}
+  const sections = [
+    `**${product.name}**`,
+    product.description || "No description provided.",
+    `**Price:** ${formatPrice(product.price)}`,
+    `**Category:** ${product.category || "General"}`
+  ];
 
-// ==================================================
-// PRODUCT LISTING COMPONENTS
-// ==================================================
-
-function productListingPanel(product) {
-  const container = makePanel(
-    product.name,
-    [
-      `**Price:** ${safeText(product.price, 50)}`,
-      `**Product ID:** ${product.id}`,
-      safeText(product.description, 1000),
-      product.purchaseUrl
-        ? `**Purchase:** ${product.purchaseUrl}`
-        : "**Purchase:** Contact the Rover shop team for instructions.",
-      product.asset
-        ? `**Delivery:** ${safeText(product.asset, 500)}`
-        : null
-    ].filter(Boolean)
-  );
-
-  if (product.imageUrl) {
-    container.addSeparatorComponents(
-      new SeparatorBuilder().setDivider(true)
-    );
-
-    container.addMediaGalleryComponents(
-      new MediaGalleryBuilder().addItems(
-        new MediaGalleryItemBuilder().setURL(product.imageUrl)
-      )
+  if (product.purchaseUrl) {
+    sections.push(
+      `**Purchase link:** ${product.purchaseUrl}`
     );
   }
 
-  return container;
+  if (product.delivery) {
+    sections.push(
+      `**Delivery information:** ${product.delivery}`
+    );
+  }
+
+  // Internal product IDs are deliberately never displayed.
+  return sections.join("\n\n");
 }
 
-// ==================================================
-// INFORMATION CENTRE
-// ==================================================
+function productAutocomplete(interaction) {
+  const focused = interaction.options.getFocused().toLowerCase();
 
-const INFORMATION = {
-  general: {
-    title: "General Information",
-    sections: [
-      "**Welcome to Rover**",
-      "Rover is a digital asset shop where customers can browse products and follow purchasing instructions.",
-      "**Our products**\nEach listing explains what is included, the displayed price and applicable usage conditions.",
-      "**Need assistance?**\nCheck the product listing or contact the shop team."
-    ]
-  },
+  return getActiveProducts()
+    .filter(product =>
+      product.name.toLowerCase().includes(focused)
+    )
+    .slice(0, 25)
+    .map(product => ({
+      name: `${product.name} — ${formatPrice(product.price)}`.slice(0, 100),
+      value: String(product.id)
+    }));
+}
 
-  rules: {
-    title: "Shop Rules",
-    sections: [
-      "**1. Respect**\nTreat customers and staff respectfully.",
-      "**2. Honest purchases**\nFraudulent payments and false claims are prohibited.",
-      "**3. Product licences**\nRespect the permissions and licence conditions supplied with every asset.",
-      "**4. Distribution**\nDo not redistribute or resell assets unless the licence permits it.",
-      "**5. Support**\nProvide accurate information when requesting assistance."
-    ]
-  },
+function productChoiceAutocomplete(interaction) {
+  const focused = interaction.options.getFocused().toLowerCase();
 
-  purchase: {
-    title: "Purchasing Guide",
-    sections: [
-      "**Step 1 — Browse**\nUse `/products` to view the catalogue.",
-      "**Step 2 — Select**\nUse `/purchase-product` and select a product from the dropdown.",
-      "**Step 3 — Checkout**\nFollow the applicable payment provider's instructions.",
-      "**Step 4 — Delivery**\nFollow the listing's delivery instructions or contact the shop team.",
-      "**Important**\nRover does not automatically verify external payments."
-    ]
-  },
+  return data.products
+    .filter(product =>
+      product.name.toLowerCase().includes(focused)
+    )
+    .slice(0, 25)
+    .map(product => ({
+      name: `${product.name} — ${formatPrice(product.price)}`.slice(0, 100),
+      value: String(product.id)
+    }));
+}
 
-  terms: {
-    title: "Terms of Service",
-    sections: [
-      "**Product descriptions**\nReview the listing, price and licence before purchasing.",
-      "**Digital products**\nPurchasing an asset does not automatically transfer copyright.",
-      "**Payment and delivery**\nA purchase link is not proof of payment.",
-      "**Refunds**\nRefunds and cancellations are handled according to the applicable published policy and consumer law."
-    ]
-  },
+function activeGiveawayAutocomplete(interaction) {
+  const focused = interaction.options.getFocused().toLowerCase();
 
-  disclaimer: {
-    title: "Disclaimer",
-    sections: [
-      "**Third-party rights**\nTrademarks and third-party assets remain the property of their respective owners.",
-      "**Compatibility**\nCheck compatibility before purchasing.",
-      "**External links**\nCheckout links may lead to third-party services.",
-      "**Payment verification**\nRover does not independently verify external payments."
-    ]
-  }
-};
+  return data.giveaways
+    .filter(giveaway =>
+      !giveaway.ended &&
+      giveaway.prize.toLowerCase().includes(focused)
+    )
+    .slice(0, 25)
+    .map(giveaway => ({
+      name: giveaway.prize.slice(0, 100),
+      value: String(giveaway.id)
+    }));
+}
 
-function informationPanel() {
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("rover_information")
-    .setPlaceholder("Select an information category")
-    .addOptions(
-      {
-        label: "General Information",
-        value: "general",
-        description: "Learn about Rover"
-      },
-      {
-        label: "Shop Rules",
-        value: "rules",
-        description: "Read the shop rules"
-      },
-      {
-        label: "Purchasing Guide",
-        value: "purchase",
-        description: "How to purchase products"
-      },
-      {
-        label: "Terms of Service",
-        value: "terms",
-        description: "Review purchase conditions"
-      },
-      {
-        label: "Disclaimer",
-        value: "disclaimer",
-        description: "Asset ownership and responsibility"
-      }
-    );
-
-  const container = makePanel("Rover Information", [
-    "**Official Store Information**",
-    "Welcome to Rover, your destination for digital assets.",
-    "Select a category below to receive detailed information privately."
-  ]);
-
-  container.addActionRowComponents(
-    new ActionRowBuilder().addComponents(menu)
+function makeProductMenu(page, mode) {
+  const products = getActiveProducts();
+  const pageCount = Math.max(
+    1,
+    Math.ceil(products.length / PAGE_SIZE)
   );
 
-  return container;
-}
+  const safePage = Math.max(
+    0,
+    Math.min(page, pageCount - 1)
+  );
 
-// ==================================================
-// PRODUCT DROPDOWN WITH PAGINATION
-// ==================================================
-
-function productMenu(page = 0) {
-  const products = [...data.products].sort((a, b) => a.id - b.id);
-  const pageCount = Math.max(1, Math.ceil(products.length / PAGE_SIZE));
-  const safePage = Math.max(0, Math.min(page, pageCount - 1));
-  const visible = products.slice(
+  const pageProducts = products.slice(
     safePage * PAGE_SIZE,
     (safePage + 1) * PAGE_SIZE
   );
 
-  const container = makePanel("Rover Product Shop", [
-    `**Available products:** ${products.length}`,
-    `**Page:** ${safePage + 1} of ${pageCount}`,
-    "Select a product below to view its details, price and purchasing instructions."
-  ]);
-
-  if (visible.length > 0) {
-    const menu = new StringSelectMenuBuilder()
-      .setCustomId(`rover_purchase_select:${safePage}`)
-      .setPlaceholder("Choose a product")
-      .addOptions(
-        visible.map(product => ({
-          label: safeText(product.name, 100),
-          value: String(product.id),
-          description: safeText(
-            `ID ${product.id} | ${product.price}`,
-            100
-          )
-        }))
-      );
-
-    container.addActionRowComponents(
-      new ActionRowBuilder().addComponents(menu)
-    );
+  if (!pageProducts.length) {
+    return [];
   }
 
-  if (pageCount > 1) {
-    const previous = new ButtonBuilder()
-      .setCustomId(`rover_purchase_page:${safePage - 1}`)
-      .setLabel("Previous")
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(safePage === 0);
-
-    const next = new ButtonBuilder()
-      .setCustomId(`rover_purchase_page:${safePage + 1}`)
-      .setLabel("Next")
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(safePage >= pageCount - 1);
-
-    container.addActionRowComponents(
-      new ActionRowBuilder().addComponents(previous, next)
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`rover_${mode}_select`)
+    .setPlaceholder(
+      mode === "purchase"
+        ? "Choose a product to view purchase details"
+        : "Choose a product to view details"
+    )
+    .addOptions(
+      pageProducts.map(product => ({
+        label: product.name.slice(0, 100),
+        description: formatPrice(product.price).slice(0, 100),
+        value: String(product.id)
+      }))
     );
-  }
 
-  return container;
-}
-
-async function showProductDetails(interaction, product) {
-  const sections = [
-    ...formatProduct(product),
-    product.purchaseUrl
-      ? "**Next step**\nUse the purchase link above and follow the checkout provider's instructions."
-      : "**Next step**\nContact the shop team for purchasing instructions.",
-    "**Payment notice**\nOpening a link does not confirm payment. External payments are not automatically verified by Rover."
+  const rows = [
+    new ActionRowBuilder().addComponents(menu)
   ];
 
-  if (product.imageUrl) {
-    sections.push(`**Product preview:** ${product.imageUrl}`);
-  }
-
-  return privatePanel(interaction, "Product Details", sections);
-}
-
-// ==================================================
-// GIVEAWAYS
-// ==================================================
-
-function giveawayPanel(giveaway) {
-  const ended = giveaway.ended || giveaway.endsAt <= Date.now();
-
-  const container = makePanel(
-    ended ? "Giveaway Ended" : "Rover Giveaway",
-    [
-      `**Prize:** ${safeText(giveaway.prize, 200)}`,
-      `**Hosted by:** <@${giveaway.hostId}>`,
-      `**Entries:** ${giveaway.entries.length}`,
-      ended
-        ? "This giveaway has ended."
-        : `**Ends:** <t:${Math.floor(giveaway.endsAt / 1000)}:F>\n**Remaining:** <t:${Math.floor(giveaway.endsAt / 1000)}:R>`,
-      giveaway.winnerId
-        ? `**Winner:** <@${giveaway.winnerId}>`
-        : ended
-          ? "The giveaway is closed."
-          : "Select the button below to enter."
-    ]
-  );
-
-  if (!ended) {
-    container.addActionRowComponents(
+  if (pageCount > 1) {
+    rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId(`rover_enter_${giveaway.id}`)
-          .setLabel("Enter Giveaway")
-          .setStyle(ButtonStyle.Primary)
+          .setCustomId(`rover_${mode}_page:${safePage - 1}`)
+          .setLabel("Previous")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(safePage === 0),
+
+        new ButtonBuilder()
+          .setCustomId(`rover_${mode}_page:${safePage + 1}`)
+          .setLabel("Next")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(safePage >= pageCount - 1)
       )
     );
   }
 
-  return container;
+  return rows;
 }
 
-async function updateGiveawayMessage(giveaway) {
-  if (!giveaway.channelId || !giveaway.messageId) return;
+async function showProductCatalogue(interaction, mode, page = 0) {
+  const products = getActiveProducts();
 
-  try {
-    const channel = await client.channels.fetch(giveaway.channelId);
-    if (!channel?.isTextBased() || !channel.messages) return;
-
-    const message = await channel.messages.fetch(giveaway.messageId);
-
-    await message.edit({
-      components: [giveawayPanel(giveaway)],
-      flags: COMPONENTS_V2
-    });
-  } catch (error) {
-    console.error(
-      `Could not update giveaway ${giveaway.id}:`,
-      error.message
+  if (!products.length) {
+    return panelReply(
+      interaction,
+      "Product catalogue",
+      ["There are currently no products available."],
+      true
     );
   }
+
+  const pageCount = Math.ceil(products.length / PAGE_SIZE);
+  const safePage = Math.max(
+    0,
+    Math.min(page, pageCount - 1)
+  );
+
+  const title = mode === "purchase"
+    ? "Browse and purchase"
+    : "Product catalogue";
+
+  const description = mode === "purchase"
+    ? "Choose a product below to view its details and purchase link."
+    : "Choose a product below to view its details.";
+
+  const components = makeProductMenu(safePage, mode);
+
+  return interaction.reply({
+    components: [
+      makePanel(title, [
+        description,
+        `Page ${safePage + 1} of ${pageCount}`,
+        `Available products: ${products.length}`
+      ]),
+      ...components
+    ],
+    flags:
+      MessageFlags.IsComponentsV2 |
+      MessageFlags.Ephemeral
+  });
 }
 
-async function finishGiveaway(giveaway) {
-  if (giveaway.ended) return;
+async function createStoreWebhook(channel) {
+  const hooks = await channel.fetchWebhooks();
 
-  giveaway.ended = true;
-
-  if (giveaway.entries.length > 0) {
-    giveaway.winnerId =
-      giveaway.entries[
-        Math.floor(Math.random() * giveaway.entries.length)
-      ];
-  }
-
-  saveData();
-  await updateGiveawayMessage(giveaway);
-
-  try {
-    const channel = await client.channels.fetch(giveaway.channelId);
-
-    if (channel?.isTextBased()) {
-      await channel.send({
-        components: [
-          makePanel("Giveaway Results", [
-            `**Prize:** ${safeText(giveaway.prize, 200)}`,
-            giveaway.winnerId
-              ? `Congratulations <@${giveaway.winnerId}>! You won.`
-              : "The giveaway ended without any entries."
-          ])
-        ],
-        flags: COMPONENTS_V2,
-        allowedMentions: {
-          users: giveaway.winnerId ? [giveaway.winnerId] : []
-        }
-      });
-    }
-  } catch (error) {
-    console.error("Could not publish giveaway results:", error);
-  }
-}
-
-function scheduleGiveaway(giveaway) {
-  if (giveaway.ended) return;
-
-  const remaining = giveaway.endsAt - Date.now();
-
-  if (remaining <= 0) {
-    finishGiveaway(giveaway).catch(console.error);
-    return;
-  }
-
-  setTimeout(() => {
-    if (giveaway.endsAt <= Date.now()) {
-      finishGiveaway(giveaway).catch(console.error);
-    } else {
-      scheduleGiveaway(giveaway);
-    }
-  }, Math.min(remaining, 2147483647));
-}
-
-// ==================================================
-// SLASH COMMANDS
-// ==================================================
-
-const commands = [
-  new SlashCommandBuilder()
-    .setName("create-product")
-    .setDescription("Create a Rover product listing")
-    .setDefaultMemberPermissions(ADMIN)
-    .addStringOption(o =>
-      o.setName("name").setDescription("Product name")
-        .setRequired(true).setMaxLength(100))
-    .addStringOption(o =>
-      o.setName("description").setDescription("Product description")
-        .setRequired(true).setMaxLength(1000))
-    .addStringOption(o =>
-      o.setName("price").setDescription("Displayed price")
-        .setRequired(true).setMaxLength(50))
-    .addStringOption(o =>
-      o.setName("purchase_url").setDescription("Checkout or purchase URL")
-        .setRequired(false).setMaxLength(500))
-    .addStringOption(o =>
-      o.setName("delivery").setDescription("Delivery instructions")
-        .setRequired(false).setMaxLength(500))
-    .addStringOption(o =>
-      o.setName("image_url").setDescription("Product preview image URL")
-        .setRequired(false).setMaxLength(500)),
-
-  new SlashCommandBuilder()
-    .setName("edit-product")
-    .setDescription("Edit a Rover product listing")
-    .setDefaultMemberPermissions(ADMIN)
-    .addIntegerOption(o =>
-      o.setName("id").setDescription("Product ID")
-        .setRequired(true).setMinValue(1))
-    .addStringOption(o =>
-      o.setName("name").setDescription("New product name")
-        .setRequired(false).setMaxLength(100))
-    .addStringOption(o =>
-      o.setName("description").setDescription("New product description")
-        .setRequired(false).setMaxLength(1000))
-    .addStringOption(o =>
-      o.setName("price").setDescription("New displayed price")
-        .setRequired(false).setMaxLength(50))
-    .addStringOption(o =>
-      o.setName("purchase_url").setDescription("New checkout URL")
-        .setRequired(false).setMaxLength(500))
-    .addStringOption(o =>
-      o.setName("delivery").setDescription("New delivery instructions")
-        .setRequired(false).setMaxLength(500))
-    .addStringOption(o =>
-      o.setName("image_url").setDescription("New preview image URL")
-        .setRequired(false).setMaxLength(500)),
-
-  new SlashCommandBuilder()
-    .setName("delete-product")
-    .setDescription("Delete a Rover product listing")
-    .setDefaultMemberPermissions(ADMIN)
-    .addIntegerOption(o =>
-      o.setName("id").setDescription("Product ID")
-        .setRequired(true).setMinValue(1)),
-
-  new SlashCommandBuilder()
-    .setName("give-product")
-    .setDescription("Send product details to a customer")
-    .setDefaultMemberPermissions(ADMIN)
-    .addUserOption(o =>
-      o.setName("customer").setDescription("Customer receiving the product")
-        .setRequired(true))
-    .addIntegerOption(o =>
-      o.setName("id").setDescription("Product ID")
-        .setRequired(true).setMinValue(1)),
-
-  new SlashCommandBuilder()
-    .setName("products")
-    .setDescription("Browse Rover's available products"),
-
-  new SlashCommandBuilder()
-    .setName("purchase-product")
-    .setDescription("Open the private Rover product shop"),
-
-  new SlashCommandBuilder()
-    .setName("embed")
-    .setDescription("Publish a product listing using a Rover webhook")
-    .setDefaultMemberPermissions(ADMIN)
-    .addIntegerOption(o =>
-      o.setName("product_id").setDescription("Product ID to publish")
-        .setRequired(true).setMinValue(1))
-    .addChannelOption(o =>
-      o.setName("channel").setDescription("Channel to publish the listing")
-        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-        .setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName("giveaway")
-    .setDescription("Start a 24-hour asset giveaway")
-    .setDefaultMemberPermissions(ADMIN)
-    .addStringOption(o =>
-      o.setName("prize").setDescription("Giveaway prize")
-        .setRequired(true).setMaxLength(200))
-    .addChannelOption(o =>
-      o.setName("channel").setDescription("Giveaway channel")
-        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-        .setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName("end-giveaway")
-    .setDescription("End a Rover giveaway early")
-    .setDefaultMemberPermissions(ADMIN)
-    .addStringOption(o =>
-      o.setName("id").setDescription("Giveaway ID")
-        .setRequired(true).setMaxLength(100)),
-
-  new SlashCommandBuilder()
-    .setName("information")
-    .setDescription("Publish Rover's information panel")
-    .setDefaultMemberPermissions(ADMIN)
-    .addChannelOption(o =>
-      o.setName("channel").setDescription("Panel channel")
-        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-        .setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName("shop-info")
-    .setDescription("View Rover shop statistics")
-    .setDefaultMemberPermissions(ADMIN)
-];
-
-// ==================================================
-// AUTOMATIC WEBHOOK
-// ==================================================
-
-async function getRoverWebhook(channel) {
-  if (!channel?.isTextBased() || !channel.guild) {
-    throw new Error("Choose a server text or announcement channel.");
-  }
-
-  if (typeof channel.createWebhook !== "function") {
-    throw new Error("This channel does not support webhooks.");
-  }
-
-  const webhooks = await channel.fetchWebhooks();
-
-  let webhook = webhooks.find(
-    item =>
-      item.name === BRAND_NAME &&
-      item.owner?.id === client.user.id &&
-      Boolean(item.token)
+  let webhook = hooks.find(
+    hook =>
+      hook.name === "Rover Store" &&
+      hook.owner?.id === client.user.id
   );
 
   if (!webhook) {
     webhook = await channel.createWebhook({
-      name: BRAND_NAME,
-      avatar: client.user.displayAvatarURL()
+      name: "Rover Store",
+      reason: "Rover product catalogue"
     });
-  }
-
-  if (!webhook.token) {
-    throw new Error("The Rover webhook has no usable token.");
   }
 
   return webhook;
 }
 
-async function publishProductWebhook(channel, product) {
-  const webhook = await getRoverWebhook(channel);
+async function finishGiveaway(giveawayId) {
+  const giveaway = data.giveaways.find(
+    item => String(item.id) === String(giveawayId)
+  );
 
-  // Components V2 webhook messages must set the V2 flag and
-  // request components in the webhook response.
-  return webhook.send({
-    components: [productListingPanel(product)],
-    flags: COMPONENTS_V2,
-    withComponents: true,
-    allowedMentions: { parse: [] }
-  });
+  if (!giveaway || giveaway.ended) return;
+
+  giveaway.ended = true;
+
+  const entrants = Array.isArray(giveaway.entries)
+    ? [...new Set(giveaway.entries)]
+    : [];
+
+  let winnerId = null;
+
+  if (entrants.length > 0) {
+    winnerId = entrants[
+      Math.floor(Math.random() * entrants.length)
+    ];
+  }
+
+  giveaway.winnerId = winnerId;
+  giveaway.endedAt = Date.now();
+
+  saveData();
+
+  try {
+    const channel = await client.channels.fetch(
+      giveaway.channelId
+    );
+
+    if (channel?.isTextBased()) {
+      if (winnerId) {
+        await channel.send({
+          components: [
+            makePanel("Giveaway ended", [
+              `**Prize:** ${giveaway.prize}`,
+              `**Winner:** <@${winnerId}>`,
+              `Congratulations!`
+            ])
+          ],
+          flags: MessageFlags.IsComponentsV2
+        });
+      } else {
+        await channel.send({
+          components: [
+            makePanel("Giveaway ended", [
+              `**Prize:** ${giveaway.prize}`,
+              "Nobody entered this giveaway."
+            ])
+          ],
+          flags: MessageFlags.IsComponentsV2
+        });
+      }
+
+      if (giveaway.messageId) {
+        const message = await channel.messages
+          .fetch(giveaway.messageId)
+          .catch(() => null);
+
+        if (message) {
+          await message.edit({
+            components: [
+              makePanel("Giveaway ended", [
+                `**Prize:** ${giveaway.prize}`,
+                winnerId
+                  ? `**Winner:** <@${winnerId}>`
+                  : "There were no entries.",
+                "This giveaway has finished."
+              ])
+            ],
+            flags: MessageFlags.IsComponentsV2
+          }).catch(() => {});
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Could not finish giveaway:", error);
+  }
 }
 
-// ==================================================
-// READY / COMMAND REGISTRATION
-// ==================================================
+function restoreGiveawayTimers() {
+  for (const giveaway of data.giveaways) {
+    if (giveaway.ended) continue;
 
-client.once("ready", async () => {
+    const remaining = giveaway.endsAt - Date.now();
+
+    if (remaining <= 0) {
+      finishGiveaway(giveaway.id);
+    } else {
+      setTimeout(
+        () => finishGiveaway(giveaway.id),
+        Math.min(remaining, 2147483647)
+      );
+    }
+  }
+}
+
+const commands = [
+  new SlashCommandBuilder()
+    .setName("ping")
+    .setDescription("Check whether Rover is responding"),
+
+  new SlashCommandBuilder()
+    .setName("create-product")
+    .setDescription("Add a product to the store")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addStringOption(option =>
+      option.setName("name")
+        .setDescription("Product name")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("description")
+        .setDescription("Product description")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("price")
+        .setDescription("Price, for example £5 or $10")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("purchase-link")
+        .setDescription("Optional purchase URL")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("delivery")
+        .setDescription("Delivery instructions")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("category")
+        .setDescription("Product category")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("image-url")
+        .setDescription("Optional image URL")
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("edit-product")
+    .setDescription("Edit an existing product")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addStringOption(option =>
+      option.setName("product")
+        .setDescription("Choose the product")
+        .setRequired(true)
+        .setAutocomplete(true)
+    )
+    .addStringOption(option =>
+      option.setName("name")
+        .setDescription("New product name")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("description")
+        .setDescription("New description")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("price")
+        .setDescription("New price")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("purchase-link")
+        .setDescription("New purchase URL")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("delivery")
+        .setDescription("New delivery information")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("category")
+        .setDescription("New category")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("image-url")
+        .setDescription("New image URL")
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("delete-product")
+    .setDescription("Remove a product from the store")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addStringOption(option =>
+      option.setName("product")
+        .setDescription("Choose the product")
+        .setRequired(true)
+        .setAutocomplete(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("products")
+    .setDescription("Browse the product catalogue"),
+
+  new SlashCommandBuilder()
+    .setName("purchase-product")
+    .setDescription("Browse products and view purchase links"),
+
+  new SlashCommandBuilder()
+    .setName("search-products")
+    .setDescription("Search the store catalogue")
+    .addStringOption(option =>
+      option.setName("query")
+        .setDescription("Search by product name, description or category")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("embed")
+    .setDescription("Post the product catalogue in a channel")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addChannelOption(option =>
+      option.setName("channel")
+        .setDescription("Channel where the catalogue should be posted")
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("shop-info")
+    .setDescription("View store statistics")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder()
+    .setName("information")
+    .setDescription("Publish information about Rover")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addChannelOption(option =>
+      option.setName("channel")
+        .setDescription("Channel for the information panel")
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("giveaway")
+    .setDescription("Start a store giveaway")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addStringOption(option =>
+      option.setName("prize")
+        .setDescription("Giveaway prize")
+        .setRequired(true)
+    )
+    .addChannelOption(option =>
+      option.setName("channel")
+        .setDescription("Giveaway channel")
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option.setName("duration-hours")
+        .setDescription("Duration in hours, from 1 to 168")
+        .setMinValue(1)
+        .setMaxValue(168)
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("end-giveaway")
+    .setDescription("End an active giveaway")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addStringOption(option =>
+      option.setName("giveaway")
+        .setDescription("Choose the giveaway prize")
+        .setAutocomplete(true)
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("give-product")
+    .setDescription("Record a product delivery")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addUserOption(option =>
+      option.setName("customer")
+        .setDescription("Customer who received the product")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("product")
+        .setDescription("Choose the product delivered")
+        .setAutocomplete(true)
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("notes")
+        .setDescription("Optional delivery notes")
+        .setRequired(false)
+    )
+];
+
+client.once("clientReady", async () => {
   console.log(`Logged in as ${client.user.tag}`);
-  console.log("Registering Rover guild commands...");
 
   try {
     const rest = new REST({ version: "10" }).setToken(TOKEN);
 
     await rest.put(
       Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-      { body: commands.map(command => command.toJSON()) }
+      {
+        body: commands.map(command => command.toJSON())
+      }
     );
 
-    console.log(`Registered ${commands.length} Rover commands.`);
-    console.log(`Guild ID: ${GUILD_ID}`);
-    console.log(`Application ID: ${CLIENT_ID}`);
-  } catch (error) {
-    console.error("Slash command registration failed:", error);
-  }
+    console.log(
+      `Successfully registered ${commands.length} Rover commands.`
+    );
 
-  for (const giveaway of data.giveaways) {
-    if (!giveaway.ended) scheduleGiveaway(giveaway);
+    restoreGiveawayTimers();
+  } catch (error) {
+    console.error("Command registration failed:", error);
   }
 });
 
-// ==================================================
-// INTERACTIONS
-// ==================================================
-
 client.on("interactionCreate", async interaction => {
   try {
-    // ---------------- INFORMATION MENU ----------------
+    if (interaction.isAutocomplete()) {
+      const command = interaction.commandName;
 
-    if (
-      interaction.isStringSelectMenu() &&
-      interaction.customId === "rover_information"
-    ) {
-      const section = INFORMATION[interaction.values[0]];
-
-      if (!section) {
-        return privatePanel(interaction, "Information Unavailable", [
-          "Please select a valid information category."
-        ]);
+      if (
+        command === "edit-product" ||
+        command === "delete-product" ||
+        command === "give-product"
+      ) {
+        return interaction.respond(
+          command === "delete-product"
+            ? productChoiceAutocomplete(interaction)
+            : productAutocomplete(interaction)
+        );
       }
 
-      return privatePanel(interaction, section.title, section.sections);
-    }
-
-    // ---------------- PRODUCT SELECTION ----------------
-
-    if (
-      interaction.isStringSelectMenu() &&
-      interaction.customId.startsWith("rover_purchase_select:")
-    ) {
-      const product = getProduct(interaction.values[0]);
-
-      if (!product) {
-        return privatePanel(interaction, "Product Unavailable", [
-          "This product no longer exists. Open `/purchase-product` again."
-        ]);
+      if (command === "end-giveaway") {
+        return interaction.respond(
+          activeGiveawayAutocomplete(interaction)
+        );
       }
 
-      return showProductDetails(interaction, product);
+      return interaction.respond([]);
     }
 
-    // ---------------- PRODUCT PAGE BUTTONS ----------------
-
-    if (
-      interaction.isButton() &&
-      interaction.customId.startsWith("rover_purchase_page:")
-    ) {
-      const page = Number(
-        interaction.customId.split(":")[1]
+    if (interaction.isButton()) {
+      const pageMatch = interaction.customId.match(
+        /^rover_(catalogue|purchase)_page:(-?\d+)$/
       );
 
-      if (!Number.isInteger(page) || page < 0) {
-        return privatePanel(interaction, "Invalid Page", [
-          "Please reopen `/purchase-product`."
-        ]);
-      }
+      if (pageMatch) {
+        const mode = pageMatch[1] === "catalogue"
+          ? "catalogue"
+          : "purchase";
 
-      return interaction.update({
-        components: [productMenu(page)],
-        flags: COMPONENTS_V2 | EPHEMERAL
-      });
-    }
+        const page = Number(pageMatch[2]);
 
-    // ---------------- GIVEAWAY ENTRY ----------------
+        const products = getActiveProducts();
 
-    if (
-      interaction.isButton() &&
-      interaction.customId.startsWith("rover_enter_")
-    ) {
-      const id = interaction.customId.slice("rover_enter_".length);
-      const giveaway = data.giveaways.find(g => g.id === id);
-
-      if (!giveaway || giveaway.ended || giveaway.endsAt <= Date.now()) {
-        if (giveaway && !giveaway.ended) {
-          await finishGiveaway(giveaway);
+        if (!products.length) {
+          return interaction.update({
+            components: [makePanel("Product catalogue", [
+              "There are currently no products available."
+            ])],
+            flags: MessageFlags.IsComponentsV2
+          });
         }
 
-        return privatePanel(interaction, "Giveaway Closed", [
-          "This giveaway has ended or is unavailable."
-        ]);
+        const pageCount = Math.ceil(products.length / PAGE_SIZE);
+        const safePage = Math.max(
+          0,
+          Math.min(page, pageCount - 1)
+        );
+
+        const title = mode === "purchase"
+          ? "Browse and purchase"
+          : "Product catalogue";
+
+        const description = mode === "purchase"
+          ? "Choose a product below to view its details and purchase link."
+          : "Choose a product below to view its details.";
+
+        return interaction.update({
+          components: [
+            makePanel(title, [
+              description,
+              `Page ${safePage + 1} of ${pageCount}`,
+              `Available products: ${products.length}`
+            ]),
+            ...makeProductMenu(safePage, mode)
+          ],
+          flags: MessageFlags.IsComponentsV2
+        });
       }
 
-      if (giveaway.entries.includes(interaction.user.id)) {
-        return privatePanel(interaction, "Already Entered", [
-          "You have already entered this giveaway."
-        ]);
+      const entryMatch = interaction.customId.match(
+        /^rover_giveaway_enter:(.+)$/
+      );
+
+      if (entryMatch) {
+        const giveaway = data.giveaways.find(
+          item => String(item.id) === entryMatch[1]
+        );
+
+        if (!giveaway || giveaway.ended ||
+            giveaway.endsAt <= Date.now()) {
+          return panelReply(
+            interaction,
+            "Giveaway closed",
+            ["This giveaway has ended or is no longer available."],
+            true
+          );
+        }
+
+        if (!Array.isArray(giveaway.entries)) {
+          giveaway.entries = [];
+        }
+
+        if (giveaway.entries.includes(interaction.user.id)) {
+          return panelReply(
+            interaction,
+            "Already entered",
+            ["You have already entered this giveaway."],
+            true
+          );
+        }
+
+        giveaway.entries.push(interaction.user.id);
+        saveData();
+
+        return panelReply(
+          interaction,
+          "Entry confirmed",
+          [
+            `You have entered the giveaway for **${giveaway.prize}**.`,
+            "Good luck!"
+          ],
+          true
+        );
       }
+    }
 
-      giveaway.entries.push(interaction.user.id);
-      saveData();
+    if (interaction.isStringSelectMenu()) {
+      const modeMatch = interaction.customId.match(
+        /^rover_(catalogue|purchase)_select$/
+      );
 
-      await interaction.update({
-        components: [giveawayPanel(giveaway)]
-      });
+      if (modeMatch) {
+        const product = getProduct(interaction.values[0]);
 
-      return interaction.followUp({
-        components: [
-          makePanel("Entry Confirmed", [
-            "Your entry has been recorded. Good luck!"
-          ])
-        ],
-        flags: COMPONENTS_V2 | EPHEMERAL
-      });
+        if (!product || product.active === false) {
+          return panelReply(
+            interaction,
+            "Product unavailable",
+            ["This product is no longer available."],
+            true
+          );
+        }
+
+        return panelReply(
+          interaction,
+          product.name,
+          [
+            formatProduct(product),
+            modeMatch[1] === "purchase"
+              ? "Use the purchase link above to continue, if one is available."
+              : "This is the product information currently listed by the store."
+          ],
+          true
+        );
+      }
     }
 
     if (!interaction.isChatInputCommand()) return;
 
-    if (!interaction.inGuild()) {
-      return privatePanel(interaction, "Server Required", [
-        "Please use this command inside a Discord server."
+    const { commandName } = interaction;
+
+    if (commandName === "ping") {
+      return panelReply(interaction, "Rover status", [
+        `WebSocket latency: ${client.ws.ping} ms`,
+        "Rover is responding."
       ]);
     }
-
-    const commandName = interaction.commandName;
-
-    const adminCommands = [
-      "create-product",
-      "edit-product",
-      "delete-product",
-      "give-product",
-      "embed",
-      "giveaway",
-      "end-giveaway",
-      "information",
-      "shop-info"
-    ];
-
-    if (adminCommands.includes(commandName) && !isAdmin(interaction)) {
-      return privatePanel(interaction, "Permission Denied", [
-        "You need the **Administrator** permission to use this command."
-      ]);
-    }
-
-    // ---------------- CREATE PRODUCT ----------------
 
     if (commandName === "create-product") {
-      const name = interaction.options.getString("name", true);
-      const description = interaction.options.getString("description", true);
-      const price = interaction.options.getString("price", true);
-      const rawUrl = interaction.options.getString("purchase_url");
-      const delivery = interaction.options.getString("delivery") || "";
-      const rawImage = interaction.options.getString("image_url");
+      if (!(await requireAdmin(interaction))) return;
 
-      const purchaseUrl = validateUrl(rawUrl);
-      const imageUrl = validateUrl(rawImage);
+      const name = cleanText(
+        interaction.options.getString("name"),
+        100
+      );
 
-      if (rawUrl && !purchaseUrl) {
-        return privatePanel(interaction, "Invalid Purchase Link", [
-          "Use a valid HTTP or HTTPS purchase URL."
-        ]);
-      }
+      const description = cleanText(
+        interaction.options.getString("description"),
+        1000
+      );
 
-      if (rawImage && !imageUrl) {
-        return privatePanel(interaction, "Invalid Image URL", [
-          "Use a valid HTTP or HTTPS image URL."
-        ]);
+      const price = cleanText(
+        interaction.options.getString("price"),
+        100
+      );
+
+      const purchaseUrl = cleanText(
+        interaction.options.getString("purchase-link"),
+        500
+      );
+
+      const delivery = cleanText(
+        interaction.options.getString("delivery"),
+        500
+      );
+
+      const category = cleanText(
+        interaction.options.getString("category") || "General",
+        100
+      );
+
+      const imageUrl = cleanText(
+        interaction.options.getString("image-url"),
+        500
+      );
+
+      if (!validUrl(purchaseUrl) || !validUrl(imageUrl)) {
+        return panelReply(
+          interaction,
+          "Invalid URL",
+          ["Purchase links and image URLs must be valid HTTP or HTTPS URLs."],
+          true
+        );
       }
 
       const product = {
@@ -908,339 +955,446 @@ client.on("interactionCreate", async interaction => {
         description,
         price,
         purchaseUrl,
-        asset: delivery,
+        delivery,
+        category,
         imageUrl,
-        createdBy: interaction.user.id,
-        createdAt: Date.now()
+        active: true,
+        createdAt: Date.now(),
+        createdBy: interaction.user.id
       };
 
       data.products.push(product);
       saveData();
 
-      return privatePanel(interaction, "Product Created", [
-        ...formatProduct(product),
-        "The product has been saved. Use `/embed` to publish its listing."
-      ]);
+      return panelReply(interaction, "Product created", [
+        `**${product.name}** has been added to the store.`,
+        `**Price:** ${formatPrice(product.price)}`,
+        `**Category:** ${product.category}`
+      ], true);
     }
-
-    // ---------------- EDIT PRODUCT ----------------
 
     if (commandName === "edit-product") {
-      const id = interaction.options.getInteger("id", true);
+      if (!(await requireAdmin(interaction))) return;
+
+      const id = interaction.options.getString("product");
       const product = getProduct(id);
 
       if (!product) {
-        return privatePanel(interaction, "Product Not Found", [
-          `No product with ID **${id}** exists.`
-        ]);
+        return panelReply(
+          interaction,
+          "Product not found",
+          ["Choose an existing product from the autocomplete list."],
+          true
+        );
       }
 
-      const name = interaction.options.getString("name");
-      const description = interaction.options.getString("description");
-      const price = interaction.options.getString("price");
-      const rawUrl = interaction.options.getString("purchase_url");
-      const delivery = interaction.options.getString("delivery");
-      const rawImage = interaction.options.getString("image_url");
+      const fields = [
+        ["name", "name", 100],
+        ["description", "description", 1000],
+        ["price", "price", 100],
+        ["purchase-link", "purchaseUrl", 500],
+        ["delivery", "delivery", 500],
+        ["category", "category", 100],
+        ["image-url", "imageUrl", 500]
+      ];
 
-      if (
-        name === null &&
-        description === null &&
-        price === null &&
-        rawUrl === null &&
-        delivery === null &&
-        rawImage === null
-      ) {
-        return privatePanel(interaction, "Nothing to Change", [
-          "Supply at least one field to update."
-        ]);
+      let changed = 0;
+
+      for (const [optionName, property, limit] of fields) {
+        const value = interaction.options.getString(optionName);
+
+        if (value !== null) {
+          const cleaned = cleanText(value, limit);
+
+          if (
+            (property === "purchaseUrl" || property === "imageUrl") &&
+            !validUrl(cleaned)
+          ) {
+            return panelReply(
+              interaction,
+              "Invalid URL",
+              ["Purchase links and image URLs must be valid HTTP or HTTPS URLs."],
+              true
+            );
+          }
+
+          product[property] = cleaned;
+          changed++;
+        }
       }
 
-      const purchaseUrl = rawUrl === null ? undefined : validateUrl(rawUrl);
-      const imageUrl = rawImage === null ? undefined : validateUrl(rawImage);
-
-      if (rawUrl !== null && purchaseUrl === null) {
-        return privatePanel(interaction, "Invalid Purchase Link", [
-          "Use a valid HTTP or HTTPS purchase URL."
-        ]);
+      if (!changed) {
+        return panelReply(
+          interaction,
+          "Nothing changed",
+          ["Provide at least one field to update."],
+          true
+        );
       }
-
-      if (rawImage !== null && imageUrl === null) {
-        return privatePanel(interaction, "Invalid Image URL", [
-          "Use a valid HTTP or HTTPS image URL."
-        ]);
-      }
-
-      if (name !== null) product.name = name;
-      if (description !== null) product.description = description;
-      if (price !== null) product.price = price;
-      if (rawUrl !== null) product.purchaseUrl = purchaseUrl;
-      if (delivery !== null) product.asset = delivery;
-      if (rawImage !== null) product.imageUrl = imageUrl;
 
       saveData();
 
-      return privatePanel(interaction, "Product Updated", [
-        ...formatProduct(product),
-        "The saved listing has been updated. Previously published webhook messages are not automatically edited."
-      ]);
+      return panelReply(interaction, "Product updated", [
+        `**${product.name}** has been updated.`,
+        `**Price:** ${formatPrice(product.price)}`
+      ], true);
     }
-
-    // ---------------- DELETE PRODUCT ----------------
 
     if (commandName === "delete-product") {
-      const id = interaction.options.getInteger("id", true);
-      const index = data.products.findIndex(product => product.id === id);
+      if (!(await requireAdmin(interaction))) return;
 
-      if (index === -1) {
-        return privatePanel(interaction, "Product Not Found", [
-          `No product with ID **${id}** exists.`
-        ]);
+      const id = interaction.options.getString("product");
+      const product = getProduct(id);
+
+      if (!product) {
+        return panelReply(
+          interaction,
+          "Product not found",
+          ["Choose an existing product from the autocomplete list."],
+          true
+        );
       }
 
-      const [product] = data.products.splice(index, 1);
+      data.products = data.products.filter(
+        item => String(item.id) !== String(product.id)
+      );
+
       saveData();
 
-      return privatePanel(interaction, "Product Deleted", [
-        `**${safeText(product.name, 100)}** (ID: ${product.id}) has been removed from the catalogue.`
-      ]);
+      return panelReply(interaction, "Product deleted", [
+        `**${product.name}** has been removed from the store.`
+      ], true);
     }
-
-    // ---------------- PUBLISH PRODUCT WEBHOOK ----------------
-
-    if (commandName === "embed") {
-      const id = interaction.options.getInteger("product_id", true);
-      const channel = interaction.options.getChannel("channel", true);
-      const product = getProduct(id);
-
-      if (!product) {
-        return privatePanel(interaction, "Product Not Found", [
-          `No product with ID **${id}** exists. Create it first using `/create-product`.`
-        ]);
-      }
-
-      await interaction.deferReply({ flags: EPHEMERAL });
-
-      try {
-        const message = await publishProductWebhook(channel, product);
-
-        return interaction.editReply({
-          components: [
-            makePanel("Product Listing Published", [
-              `**Product:** ${safeText(product.name, 100)}`,
-              `**Product ID:** ${product.id}`,
-              `**Channel:** <#${channel.id}>`,
-              `**Message ID:** ${message.id}`,
-              "Rover published the saved product using its channel webhook."
-            ])
-          ],
-          flags: COMPONENTS_V2 | EPHEMERAL
-        });
-      } catch (error) {
-        console.error("Webhook publication failed:", error);
-
-        return interaction.editReply({
-          components: [
-            makePanel("Webhook Publication Failed", [
-              "Rover could not publish this product.",
-              "Check that Rover has **Manage Webhooks**, **View Channel** and **Send Messages** permissions in the destination channel.",
-              "Check the bot console for the detailed error."
-            ])
-          ],
-          flags: COMPONENTS_V2 | EPHEMERAL
-        });
-      }
-    }
-
-    // ---------------- GIVE PRODUCT ----------------
-
-    if (commandName === "give-product") {
-      const customer = interaction.options.getUser("customer", true);
-      const id = interaction.options.getInteger("id", true);
-      const product = getProduct(id);
-
-      if (!product) {
-        return privatePanel(interaction, "Product Not Found", [
-          `No product with ID **${id}** exists.`
-        ]);
-      }
-
-      try {
-        await customer.send({
-          components: [
-            makePanel("Your Rover Product", [
-              `Hello ${safeText(customer.username, 100)}. Rover staff have issued you the following product.`,
-              ...formatProduct(product)
-            ])
-          ],
-          flags: COMPONENTS_V2
-        });
-      } catch {
-        return privatePanel(interaction, "Delivery Failed", [
-          "I couldn't DM this customer. They may have DMs disabled."
-        ]);
-      }
-
-      return privatePanel(interaction, "Product Details Sent", [
-        `**Product:** ${safeText(product.name, 100)}`,
-        `**Customer:** ${customer}`,
-        "The product details were sent by direct message. This command does not transfer or attach files automatically."
-      ]);
-    }
-
-    // ---------------- PRODUCTS CATALOGUE ----------------
 
     if (commandName === "products") {
-      if (data.products.length === 0) {
-        return privatePanel(interaction, "Rover Products", [
-          "There are currently no listed products."
-        ]);
-      }
-
-      return interaction.reply({
-        components: [productMenu(0)],
-        flags: COMPONENTS_V2 | EPHEMERAL
-      });
+      return showProductCatalogue(interaction, "catalogue");
     }
-
-    // ---------------- PURCHASE PRODUCT ----------------
 
     if (commandName === "purchase-product") {
-      if (data.products.length === 0) {
-        return privatePanel(interaction, "Rover Product Shop", [
-          "There are currently no products available."
-        ]);
+      return showProductCatalogue(interaction, "purchase");
+    }
+
+    if (commandName === "search-products") {
+      const query = cleanText(
+        interaction.options.getString("query"),
+        100
+      ).toLowerCase();
+
+      const results = getActiveProducts().filter(product =>
+        `${product.name} ${product.description} ${product.category}`
+          .toLowerCase()
+          .includes(query)
+      );
+
+      if (!results.length) {
+        return panelReply(interaction, "Search results", [
+          `No products matched **${query}**.`
+        ], true);
       }
 
-      return interaction.reply({
-        components: [productMenu(0)],
-        flags: COMPONENTS_V2 | EPHEMERAL
-      });
+      const sections = results.slice(0, 10).map(product =>
+        formatProduct(product)
+      );
+
+      if (results.length > 10) {
+        sections.push(
+          `Showing 10 of ${results.length} matching products. Use /products to browse the catalogue.`
+        );
+      }
+
+      return panelReply(
+        interaction,
+        "Search results",
+        sections,
+        true
+      );
     }
 
-    // ---------------- INFORMATION PANEL ----------------
+    if (commandName === "embed") {
+      if (!(await requireAdmin(interaction))) return;
+
+      const channel = interaction.options.getChannel("channel");
+
+      if (!channel || !channel.isTextBased()) {
+        return panelReply(
+          interaction,
+          "Invalid channel",
+          ["Choose a standard text channel."],
+          true
+        );
+      }
+
+      const products = getActiveProducts();
+
+      if (!products.length) {
+        return panelReply(
+          interaction,
+          "No products available",
+          ["Create at least one product before publishing the catalogue."],
+          true
+        );
+      }
+
+      await interaction.deferReply({
+        flags: MessageFlags.Ephemeral
+      });
+
+      try {
+        const webhook = await createStoreWebhook(channel);
+
+        const sections = products.slice(0, 10).map(product =>
+          formatProduct(product)
+        );
+
+        if (products.length > 10) {
+          sections.push(
+            `There are ${products.length} products in total. Use /products to browse the full catalogue.`
+          );
+        }
+
+        await webhook.send({
+          components: [
+            makePanel("Rover product catalogue", sections)
+          ],
+          flags: MessageFlags.IsComponentsV2
+        });
+
+        return interaction.editReply({
+          content: `The product catalogue has been published in ${channel}.`
+        });
+      } catch (error) {
+        console.error("Catalogue publication failed:", error);
+
+        return interaction.editReply({
+          content: "Could not publish the catalogue. Check the bot's channel permissions, including Manage Webhooks, View Channel and Send Messages."
+        });
+      }
+    }
+
+    if (commandName === "shop-info") {
+      if (!(await requireAdmin(interaction))) return;
+
+      const activeProducts = getActiveProducts().length;
+      const activeGiveaways = data.giveaways.filter(
+        giveaway => !giveaway.ended
+      ).length;
+
+      return panelReply(interaction, "Store overview", [
+        `**Available products:** ${activeProducts}`,
+        `**Total products saved:** ${data.products.length}`,
+        `**Active giveaways:** ${activeGiveaways}`,
+        `**Recorded deliveries:** ${data.deliveries.length}`
+      ], true);
+    }
 
     if (commandName === "information") {
-      const channel = interaction.options.getChannel("channel", true);
+      if (!(await requireAdmin(interaction))) return;
+
+      const channel = interaction.options.getChannel("channel")
+        || interaction.channel;
+
+      if (!channel?.isTextBased()) {
+        return panelReply(
+          interaction,
+          "Invalid channel",
+          ["Choose a text channel."],
+          true
+        );
+      }
 
       await channel.send({
-        components: [informationPanel()],
-        flags: COMPONENTS_V2
+        components: [
+          makePanel("Welcome to Rover", [
+            "Rover helps manage the Rover Official Store and its digital products.",
+            "**Browse products:** Use `/products` to explore the catalogue.",
+            "**Purchase information:** Use `/purchase-product` to view product details and available purchase links.",
+            "**Giveaways:** Keep an eye on store giveaways for opportunities to win prizes.",
+            "For help with an order, contact the store team."
+          ])
+        ],
+        flags: MessageFlags.IsComponentsV2
       });
 
-      return privatePanel(interaction, "Information Panel Published", [
-        `The Rover information panel has been posted in <#${channel.id}>.`
-      ]);
+      return panelReply(interaction, "Information published", [
+        `The Rover information panel has been posted in ${channel}.`
+      ], true);
     }
 
-    // ---------------- CREATE GIVEAWAY ----------------
-
     if (commandName === "giveaway") {
-      const prize = interaction.options.getString("prize", true);
-      const channel = interaction.options.getChannel("channel", true);
+      if (!(await requireAdmin(interaction))) return;
+
+      const prize = cleanText(
+        interaction.options.getString("prize"),
+        200
+      );
+
+      const channel = interaction.options.getChannel("channel");
+      const durationHours = interaction.options.getInteger(
+        "duration-hours"
+      );
+
+      if (!channel?.isTextBased()) {
+        return panelReply(
+          interaction,
+          "Invalid channel",
+          ["Choose a text channel for the giveaway."],
+          true
+        );
+      }
 
       const giveaway = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         prize,
-        hostId: interaction.user.id,
         channelId: channel.id,
         messageId: null,
         entries: [],
-        endsAt: Date.now() + GIVEAWAY_DURATION,
+        endsAt: Date.now() + durationHours * 60 * 60 * 1000,
         ended: false,
-        winnerId: null
+        createdBy: interaction.user.id
       };
 
-      const message = await channel.send({
-        components: [giveawayPanel(giveaway)],
-        flags: COMPONENTS_V2
-      });
+      const entryButton = new ButtonBuilder()
+        .setCustomId(`rover_giveaway_enter:${giveaway.id}`)
+        .setLabel("Enter giveaway")
+        .setStyle(ButtonStyle.Primary);
 
-      giveaway.messageId = message.id;
-      data.giveaways.push(giveaway);
-      saveData();
-      scheduleGiveaway(giveaway);
+      const row = new ActionRowBuilder().addComponents(
+        entryButton
+      );
 
-      return privatePanel(interaction, "Giveaway Created", [
-        `**Prize:** ${safeText(prize, 200)}`,
-        `**Channel:** <#${channel.id}>`,
-        `**Giveaway ID:** ${giveaway.id}`,
-        `**Ends:** <t:${Math.floor(giveaway.endsAt / 1000)}:F>`
-      ]);
+      try {
+        const message = await channel.send({
+          components: [
+            makePanel("Rover giveaway", [
+              `**Prize:** ${prize}`,
+              `**Ends:** <t:${Math.floor(giveaway.endsAt / 1000)}:F>`,
+              "Press the button below to enter.",
+              "One entry per person."
+            ]),
+            row
+          ],
+          flags: MessageFlags.IsComponentsV2
+        });
+
+        giveaway.messageId = message.id;
+        data.giveaways.push(giveaway);
+        saveData();
+
+        const delay = giveaway.endsAt - Date.now();
+
+        setTimeout(
+          () => finishGiveaway(giveaway.id),
+          Math.min(delay, 2147483647)
+        );
+
+        return panelReply(interaction, "Giveaway created", [
+          `The giveaway for **${prize}** has been posted in ${channel}.`,
+          `Duration: ${durationHours} hour(s).`
+        ], true);
+      } catch (error) {
+        console.error("Could not create giveaway:", error);
+
+        return panelReply(
+          interaction,
+          "Giveaway failed",
+          ["I could not post the giveaway. Check the bot's channel permissions."],
+          true
+        );
+      }
     }
-
-    // ---------------- END GIVEAWAY ----------------
 
     if (commandName === "end-giveaway") {
-      const id = interaction.options.getString("id", true);
-      const giveaway = data.giveaways.find(g => g.id === id);
+      if (!(await requireAdmin(interaction))) return;
+
+      const id = interaction.options.getString("giveaway");
+
+      const giveaway = data.giveaways.find(
+        item =>
+          String(item.id) === String(id) &&
+          !item.ended
+      );
 
       if (!giveaway) {
-        return privatePanel(interaction, "Giveaway Not Found", [
-          "No giveaway matches that ID."
-        ]);
+        return panelReply(
+          interaction,
+          "Giveaway not found",
+          ["Choose an active giveaway from the autocomplete list."],
+          true
+        );
       }
 
-      if (giveaway.ended) {
-        return privatePanel(interaction, "Already Ended", [
-          "This giveaway has already ended."
-        ]);
-      }
+      await finishGiveaway(giveaway.id);
 
-      await finishGiveaway(giveaway);
-
-      return privatePanel(interaction, "Giveaway Ended", [
-        `**Prize:** ${safeText(giveaway.prize, 200)}`,
-        giveaway.winnerId
-          ? `**Winner:** <@${giveaway.winnerId}>`
-          : "No entries were recorded."
-      ]);
+      return panelReply(interaction, "Giveaway ended", [
+        `The giveaway for **${giveaway.prize}** has been ended.`
+      ], true);
     }
 
-    // ---------------- SHOP STATISTICS ----------------
+    if (commandName === "give-product") {
+      if (!(await requireAdmin(interaction))) return;
 
-    if (commandName === "shop-info") {
-      const activeGiveaways = data.giveaways.filter(
-        giveaway => !giveaway.ended && giveaway.endsAt > Date.now()
-      ).length;
+      const customer = interaction.options.getUser("customer");
+      const productId = interaction.options.getString("product");
+      const notes = cleanText(
+        interaction.options.getString("notes") || "",
+        500
+      );
 
-      return privatePanel(interaction, "Rover Shop Statistics", [
-        `**Products listed:** ${data.products.length}`,
-        `**Giveaways stored:** ${data.giveaways.length}`,
-        `**Active giveaways:** ${activeGiveaways}`,
-        `**Next product ID:** ${data.nextProductId}`
-      ]);
+      const product = getProduct(productId);
+
+      if (!product) {
+        return panelReply(
+          interaction,
+          "Product not found",
+          ["Choose an existing product from the autocomplete list."],
+          true
+        );
+      }
+
+      const delivery = {
+        customerId: customer.id,
+        productId: product.id,
+        productName: product.name,
+        notes,
+        deliveredBy: interaction.user.id,
+        deliveredAt: Date.now()
+      };
+
+      data.deliveries.push(delivery);
+      saveData();
+
+      return panelReply(interaction, "Delivery recorded", [
+        `**Customer:** ${customer}`,
+        `**Product:** ${product.name}`,
+        `**Recorded by:** ${interaction.user}`,
+        notes ? `**Notes:** ${notes}` : "No additional notes were provided.",
+        "This records a delivery; it does not automatically send the product to the customer."
+      ], true);
     }
   } catch (error) {
     console.error(
-      `Interaction failed (${interaction.commandName || interaction.customId || "unknown"}):`,
+      `Command or interaction failed:`,
       error
     );
 
-    if (!interaction.isRepliable()) return;
-
     const response = {
-      components: [
-        makePanel("Something Went Wrong", [
-          "The request could not be completed. Please try again.",
-          "If the problem continues, check the bot console."
-        ])
-      ],
-      flags: COMPONENTS_V2 | EPHEMERAL
+      content: "Something went wrong. Check the bot console and its Discord permissions.",
+      flags: MessageFlags.Ephemeral
     };
 
-    if (interaction.deferred || interaction.replied) {
-      await interaction.followUp(response).catch(() => {});
-    } else {
-      await interaction.reply(response).catch(() => {});
+    if (interaction.isRepliable()) {
+      if (interaction.deferred) {
+        await interaction.editReply(response).catch(() => {});
+      } else if (interaction.replied) {
+        await interaction.followUp(response).catch(() => {});
+      } else {
+        await interaction.reply(response).catch(() => {});
+      }
     }
   }
 });
 
-// ==================================================
-// LOGIN
-// ==================================================
-
 client.login(TOKEN).catch(error => {
-  console.error("Discord login failed:", error);
+  console.error("Rover could not log in:", error);
   process.exit(1);
 });
