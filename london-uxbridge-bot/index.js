@@ -11,6 +11,7 @@ const {
   SlashCommandBuilder,
   PermissionFlagsBits,
   MessageFlags,
+  ChannelType,
   ContainerBuilder,
   TextDisplayBuilder,
   SeparatorBuilder,
@@ -44,7 +45,10 @@ if (!DISCORD_TOKEN || !DISCORD_CLIENT_ID || !DISCORD_GUILD_ID) {
 }
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers
+  ]
 });
 
 const defaultData = () => ({
@@ -75,9 +79,15 @@ function loadData() {
       ...defaults,
       ...saved,
       products: Array.isArray(saved.products) ? saved.products : [],
-      giveaways: Array.isArray(saved.giveaways) ? saved.giveaways : [],
-      deliveries: Array.isArray(saved.deliveries) ? saved.deliveries : [],
-      moderation: Array.isArray(saved.moderation) ? saved.moderation : []
+      giveaways: Array.isArray(saved.giveaways)
+        ? saved.giveaways
+        : [],
+      deliveries: Array.isArray(saved.deliveries)
+        ? saved.deliveries
+        : [],
+      moderation: Array.isArray(saved.moderation)
+        ? saved.moderation
+        : []
     };
   } catch (error) {
     console.error('Could not load saved data:', error);
@@ -108,7 +118,8 @@ function saveData() {
 }
 
 function makeId(prefix) {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return `${prefix}_${Date.now().toString(36)}_${Math.random()
+    .toString(36).slice(2, 8)}`;
 }
 
 function clean(value, maxLength = 1000) {
@@ -120,14 +131,18 @@ function validUrl(value) {
 
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' || url.protocol === 'http:';
+
+    return url.protocol === 'https:' ||
+      url.protocol === 'http:';
   } catch {
     return false;
   }
 }
 
 function activeProducts() {
-  return data.products.filter(product => product.active !== false);
+  return data.products.filter(
+    product => product.active !== false
+  );
 }
 
 function productById(id) {
@@ -136,8 +151,12 @@ function productById(id) {
 
 function isAdmin(interaction) {
   return Boolean(
-    interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ||
-    interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)
+    interaction.memberPermissions?.has(
+      PermissionFlagsBits.ManageGuild
+    ) ||
+    interaction.memberPermissions?.has(
+      PermissionFlagsBits.Administrator
+    )
   );
 }
 
@@ -231,7 +250,9 @@ function productOptions(products) {
   return products.slice(0, 25).map(product => ({
     label: clean(product.name, 100) || 'Unnamed product',
     description: clean(
-      `${product.price || 'Price not set'}${product.category ? ` • ${product.category}` : ''}`,
+      `${product.price || 'Price not set'}${
+        product.category ? ` • ${product.category}` : ''
+      }`,
       100
     ),
     value: product.id
@@ -345,6 +366,126 @@ function parseDuration(value) {
   return duration;
 }
 
+/* -------------------- INFORMATION TOPICS -------------------- */
+
+const informationTopics = {
+  about: {
+    title: 'About Rover',
+    sections: [
+      'Rover is a shop-management assistant for digital product communities.',
+      '**Product management:** staff can create, edit and remove product records. Product information is stored in Rover’s local data file.',
+      '**Purchases:** members can privately browse products and use the seller’s purchase link. Rover does not process payments or store card details.',
+      '**Giveaways:** staff can publish giveaways, collect entries and draw random winners when the timer ends or staff end a giveaway.',
+      '**Delivery:** staff can record that a customer received a product. Rover does not automatically deliver files or grant access.',
+      '**Moderation:** authorised staff can use moderation commands, subject to Discord permissions and role hierarchy.',
+      'Rover cannot guarantee the quality, safety or availability of a seller’s products.'
+    ]
+  },
+
+  products: {
+    title: 'Products and Purchases',
+    sections: [
+      '**Browsing:** use `/purchase` and choose a product from the dropdown. The response is private.',
+      '**Before paying:** read the full description, check the listed price and category, and confirm the item is what you want.',
+      '**Purchase links:** only use links provided by trusted shop staff. Check the destination and watch out for lookalike domains.',
+      '**Payments:** Rover does not take payments, request card details or hold funds. Transactions happen with the seller or payment provider.',
+      '**Problems:** save your receipt, order confirmation and relevant messages. Contact the seller’s official support team if a listing is incorrect or an order has not arrived.',
+      '**Account security:** never provide passwords, one-time codes, backup codes or Discord account tokens.'
+    ]
+  },
+
+  delivery: {
+    title: 'Product Delivery',
+    sections: [
+      '**What staff record:** `/give-product` lets authorised staff select a product and customer. Rover records the product, customer, staff member and time.',
+      '**What the record means:** it records that staff marked a delivery as completed. It does not itself send files, generate a licence, grant permissions or verify access.',
+      '**Missing orders:** keep your proof of payment and order number, then contact the shop’s official support team privately.',
+      '**Privacy:** share receipts and order details only with trusted staff through appropriate private channels. Do not post payment details publicly.',
+      '**Notifications:** Rover attempts to DM the customer when staff record delivery. If DMs are closed, the record still exists but the notification may not be delivered.'
+    ]
+  },
+
+  giveaways: {
+    title: 'Giveaways',
+    sections: [
+      '**Entering:** press the Enter Giveaway button on an active giveaway post. Each Discord account can enter once per giveaway.',
+      '**Closing time:** the post shows a relative countdown. Authorised staff can also end a giveaway early using `/end-giveaway`.',
+      '**Winner selection:** Rover randomly selects up to the configured number of winners from unique recorded entries. If there are fewer entries than requested winners, only available entrants can win.',
+      '**Results:** Rover posts the result in the giveaway channel and attempts to DM each winner.',
+      '**Closed DMs:** if you win but do not receive a DM, check the public result and contact the giveaway host or server staff.',
+      '**Scam warning:** legitimate staff should not ask for your password, account token or payment to release a prize.'
+    ]
+  },
+
+  safety: {
+    title: 'Safety and Support',
+    sections: [
+      '**Protect your account:** never share your Discord password, login codes, backup codes or account token. Staff do not need these.',
+      '**Check links:** be cautious with shortened URLs, unexpected downloads, fake giveaways and websites impersonating trusted services.',
+      '**Impersonation:** verify staff identities and announcements in the server. Do not trust a direct message solely because it uses a familiar name or logo.',
+      '**Purchases:** review the product details and seller before paying. Keep receipts and order confirmations.',
+      '**Report concerns:** contact the server’s official support or moderation team and provide relevant evidence privately.',
+      '**Rover’s limitations:** the bot cannot guarantee a seller is trustworthy, reverse a payment or recover a compromised account.'
+    ]
+  },
+
+  terms: {
+    title: 'Terms and Refunds',
+    sections: [
+      '**Read before buying:** check the product description, price, delivery method and seller conditions before completing payment.',
+      '**Refunds:** eligibility depends on the seller’s published terms, applicable consumer law and the payment provider’s rules. Rover cannot approve or issue refunds.',
+      '**Keep evidence:** save the order confirmation, receipt, product listing and messages related to the transaction.',
+      '**Missing or incorrect items:** contact the seller’s official support team first and explain what happened, including your order reference.',
+      '**Payment disputes:** if you cannot resolve the issue with the seller, review the dispute or buyer-protection process offered by your payment provider.',
+      '**Sensitive information:** do not send full card numbers, passwords, security codes or account tokens in public channels or DMs.'
+    ]
+  }
+};
+
+function informationMenu() {
+  return new ContainerBuilder()
+    .setAccentColor(PURPLE)
+    .addActionRowComponents(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId('rover:information:select')
+          .setPlaceholder('Choose an information topic')
+          .addOptions(
+            {
+              label: 'About Rover',
+              value: 'about',
+              description: 'Rover features and limitations'
+            },
+            {
+              label: 'Products and Purchases',
+              value: 'products',
+              description: 'Browsing, prices and safe purchases'
+            },
+            {
+              label: 'Delivery',
+              value: 'delivery',
+              description: 'Delivery records and missing orders'
+            },
+            {
+              label: 'Giveaways',
+              value: 'giveaways',
+              description: 'Entries, draws and claiming prizes'
+            },
+            {
+              label: 'Safety and Support',
+              value: 'safety',
+              description: 'Account safety and support'
+            },
+            {
+              label: 'Terms and Refunds',
+              value: 'terms',
+              description: 'Shop terms and payment disputes'
+            }
+          )
+      )
+    );
+}
+
 /* -------------------- SLASH COMMANDS -------------------- */
 
 const commands = [
@@ -378,7 +519,15 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('information')
-    .setDescription("Open Rover's information centre"),
+    .setDescription('Post the information panel in a selected channel')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addChannelOption(option =>
+      option
+        .setName('channel')
+        .setDescription('The channel where the information panel will be posted')
+        .setRequired(true)
+        .addChannelTypes(ChannelType.GuildText)
+    ),
 
   new SlashCommandBuilder()
     .setName('giveaway')
@@ -472,14 +621,18 @@ function scheduleGiveaway(giveaway) {
   const remaining = giveaway.endsAt - Date.now();
 
   if (remaining <= 0) {
-    finishGiveaway(giveaway).catch(console.error);
+    finishGiveaway(giveaway).catch(error => {
+      console.error('Could not finish giveaway:', error);
+    });
     return;
   }
 
   giveawayTimers.set(
     giveaway.id,
     setTimeout(
-      () => finishGiveaway(giveaway).catch(console.error),
+      () => finishGiveaway(giveaway).catch(error => {
+        console.error('Could not finish giveaway:', error);
+      }),
       Math.min(remaining, 2_147_000_000)
     )
   );
@@ -498,7 +651,10 @@ async function finishGiveaway(giveaway) {
   clearTimeout(giveawayTimers.get(giveaway.id));
   giveawayTimers.delete(giveaway.id);
 
-  const pool = [...new Set(giveaway.entrants || [])];
+  const pool = [
+    ...new Set(Array.isArray(giveaway.entrants) ? giveaway.entrants : [])
+  ];
+
   const winners = [];
 
   while (pool.length && winners.length < giveaway.winnerCount) {
@@ -519,7 +675,7 @@ async function finishGiveaway(giveaway) {
     ? winners.map(id => `<@${id}>`).join(', ')
     : 'No valid entries were received.';
 
-  if (channel?.isTextBased()) {
+  if (channel?.isTextBased() && channel.messages) {
     const oldMessage = giveaway.messageId
       ? await channel.messages.fetch(giveaway.messageId).catch(() => null)
       : null;
@@ -539,7 +695,8 @@ async function finishGiveaway(giveaway) {
     };
 
     if (oldMessage) {
-      await oldMessage.edit(resultPayload).catch(async () => {
+      await oldMessage.edit(resultPayload).catch(async error => {
+        console.error('Could not edit giveaway message:', error);
         await channel.send(resultPayload).catch(console.error);
       });
     } else {
@@ -561,8 +718,8 @@ async function finishGiveaway(giveaway) {
         ],
         flags: MessageFlags.IsComponentsV2
       });
-    } catch {
-      console.warn(`Could not DM giveaway winner ${winnerId}.`);
+    } catch (error) {
+      console.warn(`Could not DM giveaway winner ${winnerId}:`, error.message);
     }
   }
 }
@@ -617,12 +774,19 @@ client.once('clientReady', async () => {
     console.log(`Successfully registered ${commands.length} slash commands.`);
 
     for (const giveaway of data.giveaways) {
+      // Older saved giveaways may not contain entrants.
+      if (!Array.isArray(giveaway.entrants)) {
+        giveaway.entrants = [];
+      }
+
       if (!giveaway.ended) {
         scheduleGiveaway(giveaway);
       }
     }
+
+    await saveData();
   } catch (error) {
-    console.error('Slash command registration failed:', error);
+    console.error('Startup or slash command registration failed:', error);
   }
 });
 
@@ -722,13 +886,17 @@ client.on('interactionCreate', async interaction => {
             )
           );
 
-        case 'purchase':
-          if (!activeProducts().length) {
+        case 'purchase': {
+          const products = activeProducts();
+
+          if (!products.length) {
             return panelReply(interaction, 'No Products Available', [
               'There are no active products to browse yet.'
             ]);
           }
 
+          // Respond with the panel and menu in one initial response.
+          // This avoids creating a second initial response accidentally.
           return interaction.reply(
             panelPayload(
               'Purchase Centre',
@@ -745,12 +913,13 @@ client.on('interactionCreate', async interaction => {
                       new StringSelectMenuBuilder()
                         .setCustomId('rover:purchase:select')
                         .setPlaceholder('Choose a product')
-                        .addOptions(productOptions(activeProducts()))
+                        .addOptions(productOptions(products))
                     )
                   )
               ]
             )
           );
+        }
 
         case 'embed':
           if (!await requireAdmin(interaction)) return;
@@ -779,61 +948,62 @@ client.on('interactionCreate', async interaction => {
             )
           );
 
-        case 'information':
-          return interaction.reply(
-            panelPayload(
-              'Rover Information Centre',
-              [
-                'Welcome to Rover’s Information Centre.',
-                'Choose a topic below for detailed guidance about products, purchases, delivery, giveaways, safety and shop terms.',
-                'This main panel is public. Topic explanations are sent privately.'
+        case 'information': {
+          if (!await requireAdmin(interaction)) return;
+
+          const channel = interaction.options.getChannel('channel', true);
+
+          if (
+            !channel ||
+            channel.type !== ChannelType.GuildText ||
+            !channel.isTextBased()
+          ) {
+            return panelReply(interaction, 'Invalid Channel', [
+              'Choose a standard server text channel.'
+            ]);
+          }
+
+          const botMember = interaction.guild.members.me;
+
+          const permissions = channel.permissionsFor(botMember);
+
+          if (
+            !permissions?.has(PermissionFlagsBits.ViewChannel) ||
+            !permissions?.has(PermissionFlagsBits.SendMessages)
+          ) {
+            return panelReply(interaction, 'Missing Channel Permissions', [
+              `Rover needs **View Channel** and **Send Messages** in ${channel}.`,
+              'Give Rover the required permissions and try again.'
+            ]);
+          }
+
+          try {
+            await channel.send({
+              components: [
+                makePanel('Rover Information Centre', [
+                  'Welcome to Rover’s Information Centre.',
+                  'Choose a topic below for detailed guidance about products, purchases, delivery, giveaways, safety and shop terms.',
+                  'Topic explanations are sent privately to the person who selects them.'
+                ]),
+                informationMenu()
               ],
-              false,
-              [
-                new ContainerBuilder()
-                  .setAccentColor(PURPLE)
-                  .addActionRowComponents(
-                    new ActionRowBuilder().addComponents(
-                      new StringSelectMenuBuilder()
-                        .setCustomId('rover:information:select')
-                        .setPlaceholder('Choose an information topic')
-                        .addOptions(
-                          {
-                            label: 'About Rover',
-                            value: 'about',
-                            description: 'Rover features and limitations'
-                          },
-                          {
-                            label: 'Products and Purchases',
-                            value: 'products',
-                            description: 'Browsing, prices and safe purchases'
-                          },
-                          {
-                            label: 'Delivery',
-                            value: 'delivery',
-                            description: 'Delivery records and missing orders'
-                          },
-                          {
-                            label: 'Giveaways',
-                            value: 'giveaways',
-                            description: 'Entries, draws and claiming prizes'
-                          },
-                          {
-                            label: 'Safety and Support',
-                            value: 'safety',
-                            description: 'Account safety and support'
-                          },
-                          {
-                            label: 'Terms and Refunds',
-                            value: 'terms',
-                            description: 'Shop terms and payment disputes'
-                          }
-                        )
-                    )
-                  )
-              ]
-            )
-          );
+              flags: MessageFlags.IsComponentsV2,
+              allowedMentions: { parse: [] }
+            });
+          } catch (error) {
+            console.error('Could not post information panel:', error);
+
+            return panelReply(interaction, 'Could Not Post Panel', [
+              `Rover could not send the information panel to ${channel}.`,
+              'Check the channel permissions and the console error.'
+            ]);
+          }
+
+          return panelReply(interaction, 'Information Panel Published', [
+            `The Rover Information Centre has been posted in ${channel}.`,
+            'Members can use the dropdown on the public panel to view topics privately.'
+          ]);
+        }
 
         case 'giveaway':
           if (!await requireAdmin(interaction)) return;
@@ -888,7 +1058,7 @@ client.on('interactionCreate', async interaction => {
                         .setPlaceholder('Choose a giveaway')
                         .addOptions(
                           activeGiveaways.slice(0, 25).map(giveaway => ({
-                            label: clean(giveaway.prize, 100),
+                            label: clean(giveaway.prize, 100) || 'Unnamed giveaway',
                             description: `${(giveaway.entrants || []).length} entries`,
                             value: giveaway.id
                           }))
@@ -960,6 +1130,7 @@ client.on('interactionCreate', async interaction => {
         case 'untimeout': {
           const command = interaction.commandName;
           const target = interaction.options.getUser('user');
+
           const reason = clean(
             interaction.options.getString('reason') || 'No reason provided.',
             500
@@ -1000,7 +1171,7 @@ client.on('interactionCreate', async interaction => {
           const botMember = interaction.guild.members.me;
 
           if (
-            !interaction.memberPermissions.has(PermissionFlagsBits.Administrator) &&
+            !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) &&
             member.roles.highest.position >= actor.roles.highest.position
           ) {
             return panelReply(interaction, 'Role Hierarchy', [
@@ -1139,6 +1310,10 @@ client.on('interactionCreate', async interaction => {
           ]);
         }
 
+        if (!Array.isArray(giveaway.entrants)) {
+          giveaway.entrants = [];
+        }
+
         if (giveaway.entrants.includes(interaction.user.id)) {
           return panelReply(interaction, 'Already Entered', [
             'You have already entered this giveaway.'
@@ -1180,81 +1355,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       if (id === 'rover:information:select') {
-        const topics = {
-          about: {
-            title: 'About Rover',
-            sections: [
-              'Rover is a shop-management assistant for digital product communities.',
-              '**Product management:** staff can create, edit and remove product records. Product information is stored in Rover’s local data file.',
-              '**Purchases:** members can privately browse products and use the seller’s purchase link. Rover does not process payments or store card details.',
-              '**Giveaways:** staff can publish giveaways, collect entries and draw random winners when the timer ends or staff end a giveaway.',
-              '**Delivery:** staff can record that a customer received a product. Rover does not automatically deliver files or grant access.',
-              '**Moderation:** authorised staff can use moderation commands, subject to Discord permissions and role hierarchy.',
-              'Rover cannot guarantee the quality, safety or availability of a seller’s products.'
-            ]
-          },
-
-          products: {
-            title: 'Products and Purchases',
-            sections: [
-              '**Browsing:** use `/purchase` and choose a product from the dropdown. The response is private.',
-              '**Before paying:** read the full description, check the listed price and category, and confirm the item is what you want.',
-              '**Purchase links:** only use links provided by trusted shop staff. Check the destination and watch out for lookalike domains.',
-              '**Payments:** Rover does not take payments, request card details or hold funds. Transactions happen with the seller or payment provider.',
-              '**Problems:** save your receipt, order confirmation and relevant messages. Contact the seller’s official support team if a listing is incorrect or an order has not arrived.',
-              '**Account security:** never provide passwords, one-time codes, backup codes or Discord account tokens.'
-            ]
-          },
-
-          delivery: {
-            title: 'Product Delivery',
-            sections: [
-              '**What staff record:** `/give-product` lets authorised staff select a product and customer. Rover records the product, customer, staff member and time.',
-              '**What the record means:** it records that staff marked a delivery as completed. It does not itself send files, generate a licence, grant permissions or verify access.',
-              '**Missing orders:** keep your proof of payment and order number, then contact the shop’s official support team privately.',
-              '**Privacy:** share receipts and order details only with trusted staff through appropriate private channels. Do not post payment details publicly.',
-              '**Notifications:** Rover attempts to DM the customer when staff record delivery. If DMs are closed, the record still exists but the notification may not be delivered.'
-            ]
-          },
-
-          giveaways: {
-            title: 'Giveaways',
-            sections: [
-              '**Entering:** press the Enter Giveaway button on an active giveaway post. Each Discord account can enter once per giveaway.',
-              '**Closing time:** the post shows a relative countdown. Authorised staff can also end a giveaway early using `/end-giveaway`.',
-              '**Winner selection:** Rover randomly selects up to the configured number of winners from unique recorded entries. If there are fewer entries than requested winners, only available entrants can win.',
-              '**Results:** Rover posts the result in the giveaway channel and attempts to DM each winner.',
-              '**Closed DMs:** if you win but do not receive a DM, check the public result and contact the giveaway host or server staff.',
-              '**Scam warning:** legitimate staff should not ask for your password, account token or payment to release a prize.'
-            ]
-          },
-
-          safety: {
-            title: 'Safety and Support',
-            sections: [
-              '**Protect your account:** never share your Discord password, login codes, backup codes or account token. Staff do not need these.',
-              '**Check links:** be cautious with shortened URLs, unexpected downloads, fake giveaways and websites impersonating trusted services.',
-              '**Impersonation:** verify staff identities and announcements in the server. Do not trust a direct message solely because it uses a familiar name or logo.',
-              '**Purchases:** review the product details and seller before paying. Keep receipts and order confirmations.',
-              '**Report concerns:** contact the server’s official support or moderation team and provide relevant evidence privately.',
-              '**Rover’s limitations:** the bot cannot guarantee a seller is trustworthy, reverse a payment or recover a compromised account.'
-            ]
-          },
-
-          terms: {
-            title: 'Terms and Refunds',
-            sections: [
-              '**Read before buying:** check the product description, price, delivery method and seller conditions before completing payment.',
-              '**Refunds:** eligibility depends on the seller’s published terms, applicable consumer law and the payment provider’s rules. Rover cannot approve or issue refunds.',
-              '**Keep evidence:** save the order confirmation, receipt, product listing and messages related to the transaction.',
-              '**Missing or incorrect items:** contact the seller’s official support team first and explain what happened, including your order reference.',
-              '**Payment disputes:** if you cannot resolve the issue with the seller, review the dispute or buyer-protection process offered by your payment provider.',
-              '**Sensitive information:** do not send full card numbers, passwords, security codes or account tokens in public channels or DMs.'
-            ]
-          }
-        };
-
-        const topic = topics[value];
+        const topic = informationTopics[value];
 
         if (!topic) {
           return panelReply(interaction, 'Topic Not Found', [
@@ -1461,7 +1562,8 @@ client.on('interactionCreate', async interaction => {
 
         if (id === 'rover:product:create') {
           const duplicate = data.products.some(
-            product => product.name.toLowerCase() === productData.name.toLowerCase()
+            product =>
+              product.name.toLowerCase() === productData.name.toLowerCase()
           );
 
           if (duplicate) {
@@ -1548,14 +1650,23 @@ client.on('interactionCreate', async interaction => {
             ]
           : [];
 
-        await interaction.channel.send({
-          components: [
-            makePanel(title, [message]),
-            ...extras
-          ],
-          flags: MessageFlags.IsComponentsV2,
-          allowedMentions: { parse: [] }
-        });
+        try {
+          await interaction.channel.send({
+            components: [
+              makePanel(title, [message]),
+              ...extras
+            ],
+            flags: MessageFlags.IsComponentsV2,
+            allowedMentions: { parse: [] }
+          });
+        } catch (error) {
+          console.error('Could not publish custom panel:', error);
+
+          return panelReply(interaction, 'Panel Could Not Be Published', [
+            'Check that Rover has permission to send messages in this channel.',
+            'The full error has been recorded in the hosting console.'
+          ]);
+        }
 
         return panelReply(interaction, 'Panel Published', [
           'Your custom purple Components V2 panel has been posted publicly.'
@@ -1618,56 +1729,73 @@ client.on('interactionCreate', async interaction => {
         data.giveaways.push(giveaway);
         await saveData();
 
-        const giveawayMessage = await interaction.channel.send({
-          components: [
-            makePanel('Rover Giveaway', [
-              `**Prize:** ${prize}`,
-              details || 'Good luck to everyone entering.',
-              `**Winners:** ${winnerCount}`,
-              `**Ends:** <t:${Math.floor(giveaway.endsAt / 1000)}:R>`,
-              `Hosted by <@${interaction.user.id}>`,
-              'Press **Enter Giveaway** below. Each member can enter once.'
-            ]),
-            buttonRow([
-              new ButtonBuilder()
-                .setCustomId(`rover:giveaway:join:${giveaway.id}`)
-                .setLabel('Enter Giveaway')
-                .setStyle(ButtonStyle.Primary)
-            ])
-          ],
-          flags: MessageFlags.IsComponentsV2,
-          allowedMentions: { parse: [] }
-        });
+        try {
+          const giveawayMessage = await interaction.channel.send({
+            components: [
+              makePanel('Rover Giveaway', [
+                `**Prize:** ${prize}`,
+                details || 'Good luck to everyone entering.',
+                `**Winners:** ${winnerCount}`,
+                `**Ends:** <t:${Math.floor(giveaway.endsAt / 1000)}:R>`,
+                `Hosted by <@${interaction.user.id}>`,
+                'Press **Enter Giveaway** below. Each member can enter once.'
+              ]),
+              buttonRow([
+                new ButtonBuilder()
+                  .setCustomId(`rover:giveaway:join:${giveaway.id}`)
+                  .setLabel('Enter Giveaway')
+                  .setStyle(ButtonStyle.Primary)
+              ])
+            ],
+            flags: MessageFlags.IsComponentsV2,
+            allowedMentions: { parse: [] }
+          });
 
-        giveaway.messageId = giveawayMessage.id;
+          giveaway.messageId = giveawayMessage.id;
 
-        await saveData();
-        scheduleGiveaway(giveaway);
+          await saveData();
+          scheduleGiveaway(giveaway);
 
-        return panelReply(interaction, 'Giveaway Published', [
-          `The giveaway for **${prize}** is now live.`,
-          `It ends <t:${Math.floor(giveaway.endsAt / 1000)}:R>.`
-        ]);
+          return panelReply(interaction, 'Giveaway Published', [
+            `The giveaway for **${prize}** is now live.`,
+            `It ends <t:${Math.floor(giveaway.endsAt / 1000)}:R>.`
+          ]);
+        } catch (error) {
+          console.error('Could not publish giveaway:', error);
+
+          // Avoid leaving an unsendable giveaway active in saved data.
+          data.giveaways = data.giveaways.filter(
+            item => item.id !== giveaway.id
+          );
+
+          await saveData();
+
+          return panelReply(interaction, 'Giveaway Could Not Be Published', [
+            'Rover could not post the giveaway. Check the channel permissions and hosting console.'
+          ]);
+        }
       }
     }
   } catch (error) {
     console.error('Interaction error:', error);
+    console.error('Interaction type:', interaction.type);
+    console.error('Command/custom ID:', interaction.commandName || interaction.customId || 'unknown');
 
     try {
-      const errorMessage = {
-        content: 'Rover encountered an error. Please try again or contact an administrator.',
-        flags: MessageFlags.Ephemeral
-      };
-
       if (interaction.isRepliable()) {
+        const errorMessage = {
+          content: 'Rover encountered an error. Check the hosting console for details.',
+          flags: MessageFlags.Ephemeral
+        };
+
         if (interaction.deferred || interaction.replied) {
           await interaction.followUp(errorMessage);
         } else {
           await interaction.reply(errorMessage);
         }
       }
-    } catch {
-      // Discord may reject a response if the interaction has expired.
+    } catch (responseError) {
+      console.error('Could not send interaction error response:', responseError.message);
     }
   }
 });
