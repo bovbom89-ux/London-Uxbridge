@@ -1,7 +1,7 @@
-require("dotenv").config();
+require('dotenv').config();
 
-const fs = require("node:fs");
-const path = require("node:path");
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
   Client,
@@ -21,41 +21,38 @@ const {
   UserSelectMenuBuilder,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle,
-} = require("discord.js");
+  TextInputStyle
+} = require('discord.js');
 
-const TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
-const GUILD_ID = process.env.DISCORD_GUILD_ID;
+const {
+  DISCORD_TOKEN,
+  DISCORD_CLIENT_ID,
+  DISCORD_GUILD_ID
+} = process.env;
 
-const FOOTER = "Rover Official Store";
-const DATA_DIR = path.join(__dirname, "data");
-const DATA_FILE = path.join(DATA_DIR, "bot-data.json");
+const PURPLE = 0x8B70C8;
+const FOOTER = 'Rover Official Store';
 
-if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
+const DATA_DIR = path.join(__dirname, 'data');
+const DATA_FILE = path.join(DATA_DIR, 'bot-data.json');
+
+if (!DISCORD_TOKEN || !DISCORD_CLIENT_ID || !DISCORD_GUILD_ID) {
   console.error(
-    "Missing DISCORD_TOKEN, DISCORD_CLIENT_ID or DISCORD_GUILD_ID."
+    'Missing environment variables: DISCORD_TOKEN, DISCORD_CLIENT_ID or DISCORD_GUILD_ID.'
   );
   process.exit(1);
 }
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-function emptyData() {
-  return {
-    products: [],
-    giveaways: [],
-    deliveries: [],
-    shopInfo: {
-      name: "Rover Official Store",
-      description: "Browse our digital product catalogue.",
-      support: "",
-      terms: "",
-    },
-  };
-}
+const defaultData = () => ({
+  products: [],
+  giveaways: [],
+  deliveries: [],
+  moderation: []
+});
 
 function loadData() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -63,55 +60,92 @@ function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(
       DATA_FILE,
-      JSON.stringify(emptyData(), null, 2)
+      JSON.stringify(defaultData(), null, 2)
     );
   }
 
   try {
     const saved = JSON.parse(
-      fs.readFileSync(DATA_FILE, "utf8")
+      fs.readFileSync(DATA_FILE, 'utf8')
     );
 
+    const defaults = defaultData();
+
     return {
-      ...emptyData(),
+      ...defaults,
       ...saved,
-      products: Array.isArray(saved.products)
-        ? saved.products
-        : [],
-      giveaways: Array.isArray(saved.giveaways)
-        ? saved.giveaways
-        : [],
-      deliveries: Array.isArray(saved.deliveries)
-        ? saved.deliveries
-        : [],
-      shopInfo: {
-        ...emptyData().shopInfo,
-        ...(saved.shopInfo || {}),
-      },
+      products: Array.isArray(saved.products) ? saved.products : [],
+      giveaways: Array.isArray(saved.giveaways) ? saved.giveaways : [],
+      deliveries: Array.isArray(saved.deliveries) ? saved.deliveries : [],
+      moderation: Array.isArray(saved.moderation) ? saved.moderation : []
     };
   } catch (error) {
-    console.error("Could not load saved data:", error);
-    return emptyData();
+    console.error('Could not load saved data:', error);
+    return defaultData();
   }
 }
 
 let data = loadData();
+let saveQueue = Promise.resolve();
 
 function saveData() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  saveQueue = saveQueue.then(() => {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
 
-  const temporaryFile = `${DATA_FILE}.tmp`;
+    const temporaryFile = `${DATA_FILE}.tmp`;
 
-  fs.writeFileSync(
-    temporaryFile,
-    JSON.stringify(data, null, 2)
-  );
+    fs.writeFileSync(
+      temporaryFile,
+      JSON.stringify(data, null, 2)
+    );
 
-  fs.renameSync(temporaryFile, DATA_FILE);
+    fs.renameSync(temporaryFile, DATA_FILE);
+  }).catch(error => {
+    console.error('Could not save data:', error);
+  });
+
+  return saveQueue;
 }
 
+function makeId(prefix) {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function clean(value, maxLength = 1000) {
+  return String(value ?? '').trim().slice(0, maxLength);
+}
+
+function validUrl(value) {
+  if (!value) return true;
+
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+function activeProducts() {
+  return data.products.filter(product => product.active !== false);
+}
+
+function productById(id) {
+  return data.products.find(product => product.id === id);
+}
+
+function isAdmin(interaction) {
+  return Boolean(
+    interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ||
+    interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)
+  );
+}
+
+/* -------------------- COMPONENTS V2 PANELS -------------------- */
+
 function makePanel(title, sections = []) {
-  const container = new ContainerBuilder();
+  const container = new ContainerBuilder()
+    .setAccentColor(PURPLE);
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(`# ${title}`)
@@ -120,120 +154,95 @@ function makePanel(title, sections = []) {
   for (const section of sections) {
     if (section) {
       container.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(
-          String(section)
-        )
+        new TextDisplayBuilder().setContent(String(section))
       );
     }
   }
 
-  // Keep panels clean: one divider above the footer.
   container.addSeparatorComponents(
     new SeparatorBuilder().setDivider(true)
   );
 
   container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      `-# ${FOOTER}`
-    )
+    new TextDisplayBuilder().setContent(`-# ${FOOTER}`)
   );
 
   return container;
+}
+
+function panelPayload(
+  title,
+  sections = [],
+  ephemeral = true,
+  extraComponents = []
+) {
+  return {
+    components: [
+      makePanel(title, sections),
+      ...extraComponents
+    ],
+    flags:
+      MessageFlags.IsComponentsV2 |
+      (ephemeral ? MessageFlags.Ephemeral : 0),
+    allowedMentions: { parse: [] }
+  };
 }
 
 async function panelReply(
   interaction,
   title,
   sections = [],
-  ephemeral = true
+  ephemeral = true,
+  extraComponents = []
 ) {
-  const flags =
-    MessageFlags.IsComponentsV2 |
-    (ephemeral ? MessageFlags.Ephemeral : 0);
-
-  const payload = {
-    components: [makePanel(title, sections)],
-    flags,
-  };
+  const response = panelPayload(
+    title,
+    sections,
+    ephemeral,
+    extraComponents
+  );
 
   if (interaction.deferred || interaction.replied) {
-    return interaction.editReply(payload);
+    return interaction.editReply(response);
   }
 
-  return interaction.reply(payload);
+  return interaction.reply(response);
 }
 
-function isAdmin(interaction) {
-  return Boolean(
-    interaction.memberPermissions?.has(
-      PermissionFlagsBits.ManageGuild
-    ) ||
-    interaction.memberPermissions?.has(
-      PermissionFlagsBits.Administrator
-    )
-  );
+function buttonRow(buttons) {
+  return new ContainerBuilder()
+    .setAccentColor(PURPLE)
+    .addActionRowComponents(
+      new ActionRowBuilder().addComponents(...buttons)
+    );
 }
 
 async function requireAdmin(interaction) {
   if (isAdmin(interaction)) return true;
 
-  await panelReply(
-    interaction,
-    "Permission required",
-    [
-      "You need **Manage Server** or **Administrator** to use this command.",
-    ],
-    true
-  );
+  await panelReply(interaction, 'Permission Required', [
+    'You need **Manage Server** or **Administrator** to use this command.'
+  ]);
 
   return false;
 }
 
-function makeId(prefix) {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
-}
-
-function clean(value, max = 1000) {
-  return String(value ?? "").trim().slice(0, max);
-}
-
-function validUrl(value) {
-  if (!value) return true;
-
-  try {
-    const url = new URL(value);
-    return ["https:", "http:"].includes(url.protocol);
-  } catch {
-    return false;
-  }
-}
-
-function productById(id) {
-  return data.products.find(
-    (product) => product.id === id
-  );
-}
-
 function productOptions(products) {
-  return products.slice(0, 25).map((product) => ({
-    label: clean(product.name, 100),
+  return products.slice(0, 25).map(product => ({
+    label: clean(product.name, 100) || 'Unnamed product',
     description: clean(
-      `${product.price || "Price not set"}${
-        product.category ? ` • ${product.category}` : ""
-      }`,
+      `${product.price || 'Price not set'}${product.category ? ` • ${product.category}` : ''}`,
       100
     ),
-    value: product.id,
+    value: product.id
   }));
 }
 
 function productSummary(product) {
   const lines = [
     `**${product.name}**`,
-    product.description || "No description provided.",
-    `**Price:** ${product.price || "Not set"}`,
+    product.description || 'No description provided.',
+    `**Price:** ${product.price || 'Not set'}`
   ];
 
   if (product.category) {
@@ -244,1274 +253,1340 @@ function productSummary(product) {
     lines.push(`[Purchase link](${product.purchaseUrl})`);
   }
 
-  if (product.imageUrl) {
-    lines.push(`[Product image](${product.imageUrl})`);
+  return lines.join('\n');
+}
+
+/* -------------------- MODALS -------------------- */
+
+function textInput(
+  id,
+  label,
+  style = TextInputStyle.Short,
+  required = true,
+  value = '',
+  maxLength = 1000
+) {
+  const input = new TextInputBuilder()
+    .setCustomId(id)
+    .setLabel(label)
+    .setStyle(style)
+    .setRequired(required)
+    .setMaxLength(maxLength);
+
+  if (value) {
+    input.setValue(String(value).slice(0, maxLength));
   }
 
-  return lines.join("\n");
+  return new ActionRowBuilder().addComponents(input);
 }
 
-function createProductModal() {
+function productModal(product = null) {
+  const editing = Boolean(product);
+
   return new ModalBuilder()
-    .setCustomId("rover:product:create")
-    .setTitle("Create a product")
+    .setCustomId(
+      editing
+        ? `rover:product:edit:${product.id}`
+        : 'rover:product:create'
+    )
+    .setTitle(editing ? 'Edit Product' : 'Create Product')
     .addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("name")
-          .setLabel("Product name")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(100)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("price")
-          .setLabel("Price")
-          .setPlaceholder("£4.99 or Free")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(80)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("description")
-          .setLabel("Product description")
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true)
-          .setMaxLength(1000)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("purchaseUrl")
-          .setLabel("Purchase URL (optional)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(300)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("category")
-          .setLabel("Category (optional)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(80)
-      )
+      textInput('name', 'Product name', TextInputStyle.Short, true, product?.name || '', 100),
+      textInput('price', 'Price', TextInputStyle.Short, true, product?.price || '', 80),
+      textInput('description', 'Description', TextInputStyle.Paragraph, true, product?.description || '', 1000),
+      textInput('url', 'Purchase URL (optional)', TextInputStyle.Short, false, product?.purchaseUrl || '', 300),
+      textInput('category', 'Category (optional)', TextInputStyle.Short, false, product?.category || '', 80)
     );
 }
 
-function editProductModal(product) {
+function customPanelModal() {
   return new ModalBuilder()
-    .setCustomId(`rover:product:edit:${product.id}`)
-    .setTitle("Edit product")
+    .setCustomId('rover:embed:create')
+    .setTitle('Configure Custom Panel')
     .addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("name")
-          .setLabel("Product name")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(100)
-          .setValue(product.name)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("price")
-          .setLabel("Price")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(80)
-          .setValue(product.price || "")
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("description")
-          .setLabel("Description")
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true)
-          .setMaxLength(1000)
-          .setValue(product.description || "")
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("purchaseUrl")
-          .setLabel("Purchase URL (optional)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(300)
-          .setValue(product.purchaseUrl || "")
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("category")
-          .setLabel("Category (optional)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(80)
-          .setValue(product.category || "")
-      )
-    );
-}
-
-function searchModal() {
-  return new ModalBuilder()
-    .setCustomId("rover:product:search")
-    .setTitle("Search products")
-    .addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("query")
-          .setLabel("Search by name, category or keyword")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(100)
-      )
-    );
-}
-
-function shopInfoModal() {
-  return new ModalBuilder()
-    .setCustomId("rover:shop:edit")
-    .setTitle("Edit shop information")
-    .addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("name")
-          .setLabel("Shop name")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(100)
-          .setValue(data.shopInfo.name)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("description")
-          .setLabel("Shop description")
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true)
-          .setMaxLength(1000)
-          .setValue(data.shopInfo.description)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("support")
-          .setLabel("Support URL (optional)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(300)
-          .setValue(data.shopInfo.support || "")
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("terms")
-          .setLabel("Terms URL (optional)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(300)
-          .setValue(data.shopInfo.terms || "")
-      )
+      textInput('title', 'Panel title', TextInputStyle.Short, true, '', 100),
+      textInput('message', 'Panel message', TextInputStyle.Paragraph, true, '', 3500),
+      textInput('buttonLabel', 'Optional link button label', TextInputStyle.Short, false, '', 80),
+      textInput('url', 'Optional link URL', TextInputStyle.Short, false, '', 300)
     );
 }
 
 function giveawayModal() {
   return new ModalBuilder()
-    .setCustomId("rover:giveaway:create")
-    .setTitle("Create a giveaway")
+    .setCustomId('rover:giveaway:create')
+    .setTitle('Configure Giveaway')
     .addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("prize")
-          .setLabel("Giveaway prize")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(150)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("duration")
-          .setLabel("Duration (30m, 2h or 1d)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(20)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("winners")
-          .setLabel("Number of winners (1–10)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(2)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("details")
-          .setLabel("Extra details (optional)")
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(false)
-          .setMaxLength(500)
-      )
+      textInput('prize', 'Giveaway prize', TextInputStyle.Short, true, '', 150),
+      textInput('duration', 'Duration (30m, 2h, 1d)', TextInputStyle.Short, true, '', 20),
+      textInput('winners', 'Number of winners (1–10)', TextInputStyle.Short, true, '1', 2),
+      textInput('details', 'Additional details (optional)', TextInputStyle.Paragraph, false, '', 500)
     );
 }
 
-function parseDuration(input) {
-  const match = clean(input, 20)
+function parseDuration(value) {
+  const match = clean(value, 20)
     .toLowerCase()
     .match(/^(\d+)\s*(m|min|mins|h|hr|hrs|d|day|days)$/);
 
-  if (!match) return null;
-
-  const amount = Number(match[1]);
-  if (!Number.isInteger(amount) || amount < 1) return null;
+  if (!match || Number(match[1]) < 1) return null;
 
   const unit = match[2];
-  const multiplier = unit.startsWith("m")
+
+  const multiplier = unit.startsWith('m')
     ? 60_000
-    : unit.startsWith("h")
+    : unit.startsWith('h')
       ? 3_600_000
       : 86_400_000;
 
-  const duration = amount * multiplier;
+  const duration = Number(match[1]) * multiplier;
 
   if (duration > 7 * 86_400_000) return null;
 
   return duration;
 }
 
-async function publishCatalogue(channel, page = 0) {
-  const products = data.products.filter(
-    (product) => product.active !== false
-  );
-
-  const pageSize = 5;
-  const maxPage = Math.max(
-    0,
-    Math.ceil(products.length / pageSize) - 1
-  );
-
-  page = Math.max(0, Math.min(page, maxPage));
-
-  const selected = products.slice(
-    page * pageSize,
-    page * pageSize + pageSize
-  );
-
-  const sections = [
-    data.shopInfo.description,
-    selected.length
-      ? selected.map(productSummary).join("\n\n")
-      : "There are no products listed yet.",
-    `Page **${page + 1}/${maxPage + 1}** • **${products.length}** products`,
-  ];
-
-  const components = [makePanel(data.shopInfo.name, sections)];
-
-  if (maxPage > 0) {
-    components.push(
-      new ContainerBuilder().addActionRowComponents(
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`rover:catalogue:page:${page - 1}`)
-            .setLabel("Previous")
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(page === 0),
-          new ButtonBuilder()
-            .setCustomId(`rover:catalogue:page:${page + 1}`)
-            .setLabel("Next")
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(page === maxPage)
-        )
-      )
-    );
-  }
-
-  return channel.send({
-    components,
-    flags: MessageFlags.IsComponentsV2,
-  });
-}
+/* -------------------- SLASH COMMANDS -------------------- */
 
 const commands = [
   new SlashCommandBuilder()
-    .setName("ping")
+    .setName('ping')
     .setDescription("Check Rover's response time"),
 
   new SlashCommandBuilder()
-    .setName("create-product")
-    .setDescription("Add a product to your catalogue")
+    .setName('create-product')
+    .setDescription('Create a product')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder()
-    .setName("edit-product")
-    .setDescription("Edit an existing product")
+    .setName('edit-product')
+    .setDescription('Edit an existing product')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder()
-    .setName("delete-product")
-    .setDescription("Remove a product from your catalogue")
+    .setName('delete-product')
+    .setDescription('Delete a product')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder()
-    .setName("products")
-    .setDescription("Publish the public product catalogue")
+    .setName('purchase')
+    .setDescription('Browse products and purchase links'),
+
+  new SlashCommandBuilder()
+    .setName('embed')
+    .setDescription('Open the custom panel builder')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder()
-    .setName("purchase-product")
-    .setDescription("Get product details and its purchase link")
-    .addStringOption((option) =>
+    .setName('information')
+    .setDescription("Open Rover's information centre"),
+
+  new SlashCommandBuilder()
+    .setName('giveaway')
+    .setDescription('Open the giveaway setup panel')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder()
+    .setName('end-giveaway')
+    .setDescription('End an active giveaway')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder()
+    .setName('give-product')
+    .setDescription('Record product delivery')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder()
+    .setName('announcement')
+    .setDescription('Post a plain-text announcement')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addStringOption(option =>
       option
-        .setName("product")
-        .setDescription("Choose a product")
+        .setName('message')
+        .setDescription('Announcement message')
         .setRequired(true)
-        .setAutocomplete(true)
+        .setMaxLength(1900)
     ),
 
   new SlashCommandBuilder()
-    .setName("search-products")
-    .setDescription("Search the product catalogue"),
-
-  new SlashCommandBuilder()
-    .setName("embed")
-    .setDescription("Publish a custom shop panel")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-
-  new SlashCommandBuilder()
-    .setName("shop-info")
-    .setDescription("View or edit shop information")
-    .addStringOption((option) =>
-      option
-        .setName("action")
-        .setDescription("Choose an action")
-        .setRequired(true)
-        .addChoices(
-          {
-            name: "View information",
-            value: "view",
-          },
-          {
-            name: "Edit information",
-            value: "edit",
-          }
-        )
+    .setName('ban')
+    .setDescription('Ban a member')
+    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+    .addUserOption(option =>
+      option.setName('user').setDescription('Member to ban').setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName('reason').setDescription('Reason').setMaxLength(500)
     ),
 
   new SlashCommandBuilder()
-    .setName("information")
-    .setDescription("Learn about Rover"),
+    .setName('kick')
+    .setDescription('Kick a member')
+    .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
+    .addUserOption(option =>
+      option.setName('user').setDescription('Member to kick').setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName('reason').setDescription('Reason').setMaxLength(500)
+    ),
 
   new SlashCommandBuilder()
-    .setName("giveaway")
-    .setDescription("Create a giveaway")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .setName('timeout')
+    .setDescription('Timeout a member')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .addUserOption(option =>
+      option.setName('user').setDescription('Member to timeout').setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('minutes')
+        .setDescription('Timeout duration in minutes')
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(40320)
+    )
+    .addStringOption(option =>
+      option.setName('reason').setDescription('Reason').setMaxLength(500)
+    ),
 
   new SlashCommandBuilder()
-    .setName("end-giveaway")
-    .setDescription("End an active giveaway")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-
-  new SlashCommandBuilder()
-    .setName("give-product")
-    .setDescription("Record delivery of a product")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .setName('untimeout')
+    .setDescription('Remove a member timeout')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .addUserOption(option =>
+      option.setName('user').setDescription('Member to untimeout').setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName('reason').setDescription('Reason').setMaxLength(500)
+    )
 ];
 
-client.once("clientReady", async () => {
-  console.log(`Logged in as ${client.user.tag}`);
+/* -------------------- GIVEAWAY TIMERS -------------------- */
+
+const giveawayTimers = new Map();
+
+function scheduleGiveaway(giveaway) {
+  if (!giveaway || giveaway.ended) return;
+
+  clearTimeout(giveawayTimers.get(giveaway.id));
+
+  const remaining = giveaway.endsAt - Date.now();
+
+  if (remaining <= 0) {
+    finishGiveaway(giveaway).catch(console.error);
+    return;
+  }
+
+  giveawayTimers.set(
+    giveaway.id,
+    setTimeout(
+      () => finishGiveaway(giveaway).catch(console.error),
+      Math.min(remaining, 2_147_000_000)
+    )
+  );
+}
+
+async function finishGiveaway(giveaway) {
+  if (!giveaway || giveaway.ended) return;
+
+  if (giveaway.endsAt > Date.now()) {
+    scheduleGiveaway(giveaway);
+    return;
+  }
+
+  giveaway.ended = true;
+
+  clearTimeout(giveawayTimers.get(giveaway.id));
+  giveawayTimers.delete(giveaway.id);
+
+  const pool = [...new Set(giveaway.entrants || [])];
+  const winners = [];
+
+  while (pool.length && winners.length < giveaway.winnerCount) {
+    const index = Math.floor(Math.random() * pool.length);
+    winners.push(pool.splice(index, 1)[0]);
+  }
+
+  giveaway.winners = winners;
+  giveaway.endedAt = Date.now();
+
+  await saveData();
+
+  const channel = await client.channels
+    .fetch(giveaway.channelId)
+    .catch(() => null);
+
+  const resultText = winners.length
+    ? winners.map(id => `<@${id}>`).join(', ')
+    : 'No valid entries were received.';
+
+  if (channel?.isTextBased()) {
+    const oldMessage = giveaway.messageId
+      ? await channel.messages.fetch(giveaway.messageId).catch(() => null)
+      : null;
+
+    const resultPanel = makePanel('Giveaway Results', [
+      `**Prize:** ${giveaway.prize}`,
+      winners.length
+        ? `**Winner${winners.length === 1 ? '' : 's'}:** ${resultText}`
+        : resultText,
+      `**Entries:** ${(giveaway.entrants || []).length}`
+    ]);
+
+    const resultPayload = {
+      components: [resultPanel],
+      flags: MessageFlags.IsComponentsV2,
+      allowedMentions: { users: winners }
+    };
+
+    if (oldMessage) {
+      await oldMessage.edit(resultPayload).catch(async () => {
+        await channel.send(resultPayload).catch(console.error);
+      });
+    } else {
+      await channel.send(resultPayload).catch(console.error);
+    }
+  }
+
+  for (const winnerId of winners) {
+    try {
+      const winner = await client.users.fetch(winnerId);
+
+      await winner.send({
+        components: [
+          makePanel('You Won a Rover Giveaway!', [
+            `Congratulations! You won **${giveaway.prize}**.`,
+            `Server: **${channel?.guild?.name || 'Rover community'}**`,
+            'Contact the giveaway host or server staff to claim your prize.'
+          ])
+        ],
+        flags: MessageFlags.IsComponentsV2
+      });
+    } catch {
+      console.warn(`Could not DM giveaway winner ${winnerId}.`);
+    }
+  }
+}
+
+/* -------------------- MODERATION NOTICES -------------------- */
+
+async function sendModerationNotice(
+  user,
+  action,
+  guild,
+  reason,
+  duration = ''
+) {
+  try {
+    await user.send({
+      components: [
+        makePanel('Moderation Notice', [
+          `**Action:** ${action}`,
+          `**Server:** ${guild.name}`,
+          duration ? `**Duration:** ${duration}` : '',
+          `**Reason:** ${reason || 'No reason provided.'}`,
+          'If you believe this action was made in error, contact the server moderation team.'
+        ])
+      ],
+      flags: MessageFlags.IsComponentsV2
+    });
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* -------------------- STARTUP -------------------- */
+
+client.once('clientReady', async () => {
+  console.log(`Rover is online as ${client.user.tag}`);
 
   try {
-    const rest = new REST({ version: "10" }).setToken(TOKEN);
+    const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 
     await rest.put(
-      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+      Routes.applicationGuildCommands(
+        DISCORD_CLIENT_ID,
+        DISCORD_GUILD_ID
+      ),
       {
-        body: commands.map((command) => command.toJSON()),
+        body: commands.map(command => command.toJSON())
       }
     );
 
-    console.log(
-      `Registered ${commands.length} Rover slash commands.`
-    );
+    console.log(`Successfully registered ${commands.length} slash commands.`);
+
+    for (const giveaway of data.giveaways) {
+      if (!giveaway.ended) {
+        scheduleGiveaway(giveaway);
+      }
+    }
   } catch (error) {
-    console.error("Command registration failed:", error);
+    console.error('Slash command registration failed:', error);
   }
 });
 
-client.on("interactionCreate", async (interaction) => {
+/* -------------------- INTERACTIONS -------------------- */
+
+client.on('interactionCreate', async interaction => {
   try {
-    if (interaction.isAutocomplete()) {
-      if (interaction.commandName === "purchase-product") {
-        const query = clean(
-          interaction.options.getFocused(),
-          100
-        ).toLowerCase();
-
-        const choices = data.products
-          .filter(
-            (product) =>
-              product.active !== false &&
-              product.name.toLowerCase().includes(query)
-          )
-          .slice(0, 25)
-          .map((product) => ({
-            name: `${product.name} — ${product.price || "Price not set"}`.slice(0, 100),
-            value: product.id,
-          }));
-
-        return interaction.respond(choices);
-      }
-
-      return interaction.respond([]);
-    }
+    /* ---------- SLASH COMMANDS ---------- */
 
     if (interaction.isChatInputCommand()) {
       switch (interaction.commandName) {
-        case "ping":
-          return panelReply(
-            interaction,
-            "Rover status",
-            [
-              `WebSocket latency: **${client.ws.ping} ms**`,
-              `Listed products: **${data.products.filter((p) => p.active !== false).length}**`,
-              "Rover is responding.",
-            ],
-            false
-          );
+        case 'ping':
+          return panelReply(interaction, 'Rover Status', [
+            `WebSocket latency: **${client.ws.ping} ms**`,
+            `Active products: **${activeProducts().length}**`,
+            `Active giveaways: **${data.giveaways.filter(g => !g.ended).length}**`,
+            'Rover is online.'
+          ]);
 
-        case "create-product":
-          if (!(await requireAdmin(interaction))) return;
+        case 'create-product':
+          if (!await requireAdmin(interaction)) return;
 
-          return interaction.reply({
-            components: [
-              makePanel("Create a product", [
-                "Add a product to your shop catalogue.",
-                "Press the button below to enter its details.",
-              ]),
-              new ContainerBuilder().addActionRowComponents(
-                new ActionRowBuilder().addComponents(
+          return interaction.reply(
+            panelPayload(
+              'Create a Product',
+              [
+                'Add a new product to Rover.',
+                'Select the button below to enter the product details.'
+              ],
+              true,
+              [
+                buttonRow([
                   new ButtonBuilder()
-                    .setCustomId("rover:product:create:open")
-                    .setLabel("Add product")
+                    .setCustomId('rover:product:create:open')
+                    .setLabel('Create Product')
                     .setStyle(ButtonStyle.Primary)
-                )
-              ),
-            ],
-            flags:
-              MessageFlags.IsComponentsV2 |
-              MessageFlags.Ephemeral,
-          });
+                ])
+              ]
+            )
+          );
 
-        case "edit-product":
-          if (!(await requireAdmin(interaction))) return;
+        case 'edit-product':
+          if (!await requireAdmin(interaction)) return;
 
           if (!data.products.length) {
-            return panelReply(
-              interaction,
-              "No products",
-              ["Create a product first."],
-              true
-            );
+            return panelReply(interaction, 'No Products', [
+              'Create a product before trying to edit one.'
+            ]);
           }
 
-          return interaction.reply({
-            components: [
-              makePanel("Edit a product", [
-                "Choose which product you want to update.",
-              ]),
-              new ContainerBuilder().addActionRowComponents(
-                new ActionRowBuilder().addComponents(
-                  new StringSelectMenuBuilder()
-                    .setCustomId("rover:product:edit:select")
-                    .setPlaceholder("Select a product")
-                    .addOptions(productOptions(data.products))
-                )
-              ),
-            ],
-            flags:
-              MessageFlags.IsComponentsV2 |
-              MessageFlags.Ephemeral,
-          });
-
-        case "delete-product":
-          if (!(await requireAdmin(interaction))) return;
-
-          if (!data.products.length) {
-            return panelReply(
-              interaction,
-              "No products",
-              ["There are no products to delete."],
-              true
-            );
-          }
-
-          return interaction.reply({
-            components: [
-              makePanel("Delete a product", [
-                "Select a product to remove it from your catalogue.",
-              ]),
-              new ContainerBuilder().addActionRowComponents(
-                new ActionRowBuilder().addComponents(
-                  new StringSelectMenuBuilder()
-                    .setCustomId("rover:product:delete:select")
-                    .setPlaceholder("Select a product")
-                    .addOptions(productOptions(data.products))
-                )
-              ),
-            ],
-            flags:
-              MessageFlags.IsComponentsV2 |
-              MessageFlags.Ephemeral,
-          });
-
-        case "products":
-          if (!(await requireAdmin(interaction))) return;
-
-          await interaction.deferReply({
-            flags: MessageFlags.Ephemeral,
-          });
-
-          await publishCatalogue(interaction.channel, 0);
-
-          return panelReply(
-            interaction,
-            "Catalogue published",
-            ["Your public catalogue has been posted in this channel."],
-            true
-          );
-
-        case "purchase-product": {
-          const product = productById(
-            interaction.options.getString("product")
-          );
-
-          if (!product || product.active === false) {
-            return panelReply(
-              interaction,
-              "Product unavailable",
-              ["This product could not be found."],
-              true
-            );
-          }
-
-          return panelReply(
-            interaction,
-            "Product details",
-            [
-              productSummary(product),
-              product.purchaseUrl
-                ? ""
-                : "The shop has not added a purchase URL yet.",
-            ],
-            true
-          );
-        }
-
-        case "search-products":
-          return interaction.showModal(searchModal());
-
-        case "shop-info": {
-          const action = interaction.options.getString("action");
-
-          if (action === "edit") {
-            if (!(await requireAdmin(interaction))) return;
-            return interaction.showModal(shopInfoModal());
-          }
-
-          return panelReply(
-            interaction,
-            data.shopInfo.name,
-            [
-              data.shopInfo.description,
-              data.shopInfo.support
-                ? `[Support](${data.shopInfo.support})`
-                : "",
-              data.shopInfo.terms
-                ? `[Terms and conditions](${data.shopInfo.terms})`
-                : "",
-            ],
-            false
-          );
-        }
-
-        case "information":
-          return panelReply(
-            interaction,
-            "About Rover",
-            [
-              "Rover helps manage a digital product shop, catalogue, giveaways and delivery records.",
-              "Use `/products` to publish your catalogue and `/search-products` to find an item.",
-              "Rover provides purchase links but does not process payments.",
-            ],
-            false
-          );
-
-        case "embed":
-          if (!(await requireAdmin(interaction))) return;
-
-          return interaction.showModal(
-            new ModalBuilder()
-              .setCustomId("rover:embed:create")
-              .setTitle("Create a custom panel")
-              .addComponents(
-                new ActionRowBuilder().addComponents(
-                  new TextInputBuilder()
-                    .setCustomId("title")
-                    .setLabel("Panel title")
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(true)
-                    .setMaxLength(100)
-                ),
-                new ActionRowBuilder().addComponents(
-                  new TextInputBuilder()
-                    .setCustomId("description")
-                    .setLabel("Panel message")
-                    .setStyle(TextInputStyle.Paragraph)
-                    .setRequired(true)
-                    .setMaxLength(3500)
-                ),
-                new ActionRowBuilder().addComponents(
-                  new TextInputBuilder()
-                    .setCustomId("linkLabel")
-                    .setLabel("Optional link button label")
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(false)
-                    .setMaxLength(80)
-                ),
-                new ActionRowBuilder().addComponents(
-                  new TextInputBuilder()
-                    .setCustomId("linkUrl")
-                    .setLabel("Optional link URL")
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(false)
-                    .setMaxLength(300)
-                )
-              )
-          );
-
-        case "giveaway":
-          if (!(await requireAdmin(interaction))) return;
-
-          return interaction.showModal(
-            giveawayModal()
-          );
-
-        case "end-giveaway": {
-          if (!(await requireAdmin(interaction))) return;
-
-          const active = data.giveaways.filter(
-            (giveaway) => !giveaway.ended
-          );
-
-          if (!active.length) {
-            return panelReply(
-              interaction,
-              "No active giveaways",
-              ["There are no active giveaways to end."],
-              true
-            );
-          }
-
-          return interaction.reply({
-            components: [
-              makePanel("End a giveaway", [
-                "Choose which giveaway to end.",
-              ]),
-              new ContainerBuilder().addActionRowComponents(
-                new ActionRowBuilder().addComponents(
-                  new StringSelectMenuBuilder()
-                    .setCustomId("rover:giveaway:end:select")
-                    .setPlaceholder("Select a giveaway")
-                    .addOptions(
-                      active.slice(0, 25).map((giveaway) => ({
-                        label: clean(giveaway.prize, 100),
-                        description: "End this giveaway early",
-                        value: giveaway.id,
-                      }))
+          return interaction.reply(
+            panelPayload(
+              'Edit a Product',
+              ['Choose a product from the menu below.'],
+              true,
+              [
+                new ContainerBuilder()
+                  .setAccentColor(PURPLE)
+                  .addActionRowComponents(
+                    new ActionRowBuilder().addComponents(
+                      new StringSelectMenuBuilder()
+                        .setCustomId('rover:product:edit:select')
+                        .setPlaceholder('Choose a product')
+                        .addOptions(productOptions(data.products))
                     )
-                )
-              ),
-            ],
-            flags:
-              MessageFlags.IsComponentsV2 |
-              MessageFlags.Ephemeral,
-          });
+                  )
+              ]
+            )
+          );
+
+        case 'delete-product':
+          if (!await requireAdmin(interaction)) return;
+
+          if (!data.products.length) {
+            return panelReply(interaction, 'No Products', [
+              'There are no products to delete.'
+            ]);
+          }
+
+          return interaction.reply(
+            panelPayload(
+              'Delete a Product',
+              ['Choose the product you want to remove.'],
+              true,
+              [
+                new ContainerBuilder()
+                  .setAccentColor(PURPLE)
+                  .addActionRowComponents(
+                    new ActionRowBuilder().addComponents(
+                      new StringSelectMenuBuilder()
+                        .setCustomId('rover:product:delete:select')
+                        .setPlaceholder('Choose a product')
+                        .addOptions(productOptions(data.products))
+                    )
+                  )
+              ]
+            )
+          );
+
+        case 'purchase':
+          if (!activeProducts().length) {
+            return panelReply(interaction, 'No Products Available', [
+              'There are no active products to browse yet.'
+            ]);
+          }
+
+          return interaction.reply(
+            panelPayload(
+              'Purchase Centre',
+              [
+                'Choose a product below to see its details, price and purchase link.',
+                'Rover does not process payments. Check the seller details before purchasing.'
+              ],
+              true,
+              [
+                new ContainerBuilder()
+                  .setAccentColor(PURPLE)
+                  .addActionRowComponents(
+                    new ActionRowBuilder().addComponents(
+                      new StringSelectMenuBuilder()
+                        .setCustomId('rover:purchase:select')
+                        .setPlaceholder('Choose a product')
+                        .addOptions(productOptions(activeProducts()))
+                    )
+                  )
+              ]
+            )
+          );
+
+        case 'embed':
+          if (!await requireAdmin(interaction)) return;
+
+          return interaction.reply(
+            panelPayload(
+              'Custom Panel Builder',
+              [
+                'Create a custom purple Components V2 panel.',
+                'Press **Configure Panel** to enter your title, message and optional link.',
+                'The setup stays private. The finished panel is posted publicly.'
+              ],
+              true,
+              [
+                buttonRow([
+                  new ButtonBuilder()
+                    .setCustomId('rover:embed:open')
+                    .setLabel('Configure Panel')
+                    .setStyle(ButtonStyle.Primary),
+                  new ButtonBuilder()
+                    .setCustomId('rover:cancel')
+                    .setLabel('Cancel')
+                    .setStyle(ButtonStyle.Secondary)
+                ])
+              ]
+            )
+          );
+
+        case 'information':
+          return interaction.reply(
+            panelPayload(
+              'Rover Information Centre',
+              [
+                'Welcome to Rover’s Information Centre.',
+                'Choose a topic below for detailed guidance about products, purchases, delivery, giveaways, safety and shop terms.',
+                'This main panel is public. Topic explanations are sent privately.'
+              ],
+              false,
+              [
+                new ContainerBuilder()
+                  .setAccentColor(PURPLE)
+                  .addActionRowComponents(
+                    new ActionRowBuilder().addComponents(
+                      new StringSelectMenuBuilder()
+                        .setCustomId('rover:information:select')
+                        .setPlaceholder('Choose an information topic')
+                        .addOptions(
+                          {
+                            label: 'About Rover',
+                            value: 'about',
+                            description: 'Rover features and limitations'
+                          },
+                          {
+                            label: 'Products and Purchases',
+                            value: 'products',
+                            description: 'Browsing, prices and safe purchases'
+                          },
+                          {
+                            label: 'Delivery',
+                            value: 'delivery',
+                            description: 'Delivery records and missing orders'
+                          },
+                          {
+                            label: 'Giveaways',
+                            value: 'giveaways',
+                            description: 'Entries, draws and claiming prizes'
+                          },
+                          {
+                            label: 'Safety and Support',
+                            value: 'safety',
+                            description: 'Account safety and support'
+                          },
+                          {
+                            label: 'Terms and Refunds',
+                            value: 'terms',
+                            description: 'Shop terms and payment disputes'
+                          }
+                        )
+                    )
+                  )
+              ]
+            )
+          );
+
+        case 'giveaway':
+          if (!await requireAdmin(interaction)) return;
+
+          return interaction.reply(
+            panelPayload(
+              'Giveaway Setup',
+              [
+                'Set the prize, duration, winner count and optional details.',
+                'Press **Configure Giveaway** to get started.',
+                'The setup is private. The giveaway post and results are public.'
+              ],
+              true,
+              [
+                buttonRow([
+                  new ButtonBuilder()
+                    .setCustomId('rover:giveaway:open')
+                    .setLabel('Configure Giveaway')
+                    .setStyle(ButtonStyle.Primary),
+                  new ButtonBuilder()
+                    .setCustomId('rover:cancel')
+                    .setLabel('Cancel')
+                    .setStyle(ButtonStyle.Secondary)
+                ])
+              ]
+            )
+          );
+
+        case 'end-giveaway': {
+          if (!await requireAdmin(interaction)) return;
+
+          const activeGiveaways = data.giveaways.filter(g => !g.ended);
+
+          if (!activeGiveaways.length) {
+            return panelReply(interaction, 'No Active Giveaways', [
+              'There are no giveaways to end.'
+            ]);
+          }
+
+          return interaction.reply(
+            panelPayload(
+              'End a Giveaway',
+              ['Choose a giveaway to draw the winners immediately.'],
+              true,
+              [
+                new ContainerBuilder()
+                  .setAccentColor(PURPLE)
+                  .addActionRowComponents(
+                    new ActionRowBuilder().addComponents(
+                      new StringSelectMenuBuilder()
+                        .setCustomId('rover:giveaway:end:select')
+                        .setPlaceholder('Choose a giveaway')
+                        .addOptions(
+                          activeGiveaways.slice(0, 25).map(giveaway => ({
+                            label: clean(giveaway.prize, 100),
+                            description: `${(giveaway.entrants || []).length} entries`,
+                            value: giveaway.id
+                          }))
+                        )
+                    )
+                  )
+              ]
+            )
+          );
         }
 
-        case "give-product": {
-          if (!(await requireAdmin(interaction))) return;
+        case 'give-product': {
+          if (!await requireAdmin(interaction)) return;
 
-          const products = data.products.filter(
-            (product) => product.active !== false
-          );
+          const products = activeProducts();
 
           if (!products.length) {
-            return panelReply(
-              interaction,
-              "No products",
-              ["Create a product before recording a delivery."],
-              true
-            );
+            return panelReply(interaction, 'No Products', [
+              'Create a product before recording a delivery.'
+            ]);
           }
 
-          return interaction.reply({
-            components: [
-              makePanel("Record a delivery", [
-                "Choose the product, then select the customer.",
-                "This records the delivery; it does not send files automatically.",
-              ]),
-              new ContainerBuilder().addActionRowComponents(
-                new ActionRowBuilder().addComponents(
-                  new StringSelectMenuBuilder()
-                    .setCustomId("rover:delivery:product")
-                    .setPlaceholder("Select a product")
-                    .addOptions(productOptions(products))
-                )
-              ),
-            ],
-            flags:
-              MessageFlags.IsComponentsV2 |
-              MessageFlags.Ephemeral,
+          return interaction.reply(
+            panelPayload(
+              'Record Product Delivery',
+              [
+                'Choose the product first, then select the customer.',
+                'This records the delivery. It does not automatically send files or grant product access.'
+              ],
+              true,
+              [
+                new ContainerBuilder()
+                  .setAccentColor(PURPLE)
+                  .addActionRowComponents(
+                    new ActionRowBuilder().addComponents(
+                      new StringSelectMenuBuilder()
+                        .setCustomId('rover:delivery:product')
+                        .setPlaceholder('Choose a product')
+                        .addOptions(productOptions(products))
+                    )
+                  )
+              ]
+            )
+          );
+        }
+
+        case 'announcement': {
+          if (!await requireAdmin(interaction)) return;
+
+          const message = clean(
+            interaction.options.getString('message'),
+            1900
+          );
+
+          await interaction.channel.send({
+            content: message,
+            allowedMentions: { parse: [] }
           });
+
+          return interaction.reply({
+            content: 'Announcement posted.',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+
+        case 'ban':
+        case 'kick':
+        case 'timeout':
+        case 'untimeout': {
+          const command = interaction.commandName;
+          const target = interaction.options.getUser('user');
+          const reason = clean(
+            interaction.options.getString('reason') || 'No reason provided.',
+            500
+          );
+
+          if (!interaction.guild) {
+            return panelReply(interaction, 'Server Only', [
+              'This command can only be used inside a server.'
+            ]);
+          }
+
+          if (
+            target.id === interaction.user.id ||
+            target.id === client.user.id
+          ) {
+            return panelReply(interaction, 'Action Cancelled', [
+              'You cannot use this command on yourself or Rover.'
+            ]);
+          }
+
+          const member = await interaction.guild.members
+            .fetch(target.id)
+            .catch(() => null);
+
+          if (!member) {
+            return panelReply(interaction, 'Member Not Found', [
+              'That user is not currently in this server.'
+            ]);
+          }
+
+          if (target.id === interaction.guild.ownerId) {
+            return panelReply(interaction, 'Action Not Allowed', [
+              'The server owner cannot be moderated by Rover.'
+            ]);
+          }
+
+          const actor = interaction.member;
+          const botMember = interaction.guild.members.me;
+
+          if (
+            !interaction.memberPermissions.has(PermissionFlagsBits.Administrator) &&
+            member.roles.highest.position >= actor.roles.highest.position
+          ) {
+            return panelReply(interaction, 'Role Hierarchy', [
+              'You cannot moderate someone whose highest role is equal to or higher than yours.'
+            ]);
+          }
+
+          if (
+            botMember &&
+            member.roles.highest.position >= botMember.roles.highest.position
+          ) {
+            return panelReply(interaction, 'Bot Role Hierarchy', [
+              'Move Rover’s highest role above the target member’s highest role and try again.'
+            ]);
+          }
+
+          const minutes = command === 'timeout'
+            ? interaction.options.getInteger('minutes')
+            : null;
+
+          const action = command === 'ban'
+            ? 'Ban'
+            : command === 'kick'
+              ? 'Kick'
+              : command === 'timeout'
+                ? 'Timeout'
+                : 'Timeout Removed';
+
+          const duration = minutes ? `${minutes} minute(s)` : '';
+
+          const dmSent = await sendModerationNotice(
+            target,
+            action,
+            interaction.guild,
+            reason,
+            duration
+          );
+
+          if (command === 'ban') {
+            await interaction.guild.members.ban(target.id, {
+              reason: `${reason} | Moderator: ${interaction.user.tag}`
+            });
+          } else if (command === 'kick') {
+            await member.kick(
+              `${reason} | Moderator: ${interaction.user.tag}`
+            );
+          } else if (command === 'timeout') {
+            await member.timeout(minutes * 60_000, reason);
+          } else {
+            await member.timeout(null, reason);
+          }
+
+          data.moderation.push({
+            id: makeId('mod'),
+            action,
+            targetId: target.id,
+            moderatorId: interaction.user.id,
+            reason,
+            guildId: interaction.guildId,
+            createdAt: Date.now()
+          });
+
+          if (data.moderation.length > 500) {
+            data.moderation = data.moderation.slice(-500);
+          }
+
+          await saveData();
+
+          return panelReply(interaction, `${action} Completed`, [
+            `**Member:** ${target.tag}`,
+            `**Reason:** ${reason}`,
+            duration ? `**Duration:** ${duration}` : '',
+            `**Notice DM:** ${dmSent ? 'Sent' : 'Could not be delivered because DMs may be closed.'}`
+          ]);
         }
       }
     }
+
+    /* ---------- BUTTONS ---------- */
 
     if (interaction.isButton()) {
       const id = interaction.customId;
 
-      if (id === "rover:product:create:open") {
-        if (!(await requireAdmin(interaction))) return;
-        return interaction.showModal(createProductModal());
+      if (id === 'rover:product:create:open') {
+        if (!await requireAdmin(interaction)) return;
+        return interaction.showModal(productModal());
       }
 
-      if (id === "rover:cancel") {
-        return panelReply(
-          interaction,
-          "Cancelled",
-          ["No changes were made."],
-          true
-        );
+      if (id === 'rover:embed:open') {
+        if (!await requireAdmin(interaction)) return;
+        return interaction.showModal(customPanelModal());
       }
 
-      if (id.startsWith("rover:catalogue:page:")) {
-        const page = Number(id.split(":").pop());
-        await interaction.deferUpdate();
-        return publishCatalogue(interaction.channel, page);
+      if (id === 'rover:giveaway:open') {
+        if (!await requireAdmin(interaction)) return;
+        return interaction.showModal(giveawayModal());
       }
 
-      if (id.startsWith("rover:product:delete:confirm:")) {
-        if (!(await requireAdmin(interaction))) return;
+      if (id === 'rover:cancel') {
+        return panelReply(interaction, 'Cancelled', [
+          'No changes were made.'
+        ]);
+      }
 
-        const productId = id.split(":").pop();
-        const index = data.products.findIndex(
-          (product) => product.id === productId
-        );
+      if (id.startsWith('rover:product:delete:confirm:')) {
+        if (!await requireAdmin(interaction)) return;
+
+        const productId = id.split(':').pop();
+        const index = data.products.findIndex(p => p.id === productId);
 
         if (index === -1) {
-          return panelReply(
-            interaction,
-            "Product not found",
-            ["This product has already been removed."],
-            true
-          );
+          return panelReply(interaction, 'Product Not Found', [
+            'The product may already have been deleted.'
+          ]);
         }
 
         const [removed] = data.products.splice(index, 1);
-        saveData();
 
-        return panelReply(
-          interaction,
-          "Product deleted",
-          [`**${removed.name}** has been removed.`],
-          true
-        );
+        await saveData();
+
+        return panelReply(interaction, 'Product Deleted', [
+          `**${removed.name}** has been removed.`
+        ]);
       }
 
-      if (id.startsWith("rover:giveaway:join:")) {
-        const giveawayId = id.split(":").pop();
+      if (id.startsWith('rover:giveaway:join:')) {
+        const giveawayId = id.split(':').pop();
+
         const giveaway = data.giveaways.find(
-          (item) => item.id === giveawayId && !item.ended
+          g => g.id === giveawayId && !g.ended
         );
 
         if (!giveaway || giveaway.endsAt <= Date.now()) {
-          return panelReply(
-            interaction,
-            "Giveaway closed",
-            ["This giveaway has ended."],
-            true
-          );
+          return panelReply(interaction, 'Giveaway Closed', [
+            'This giveaway has ended.'
+          ]);
         }
 
         if (giveaway.entrants.includes(interaction.user.id)) {
-          return panelReply(
-            interaction,
-            "Already entered",
-            ["You have already entered this giveaway."],
-            true
-          );
+          return panelReply(interaction, 'Already Entered', [
+            'You have already entered this giveaway.'
+          ]);
         }
 
         giveaway.entrants.push(interaction.user.id);
-        saveData();
 
-        return panelReply(
-          interaction,
-          "Entry confirmed",
-          ["Your giveaway entry has been recorded. Good luck!"],
-          true
-        );
+        await saveData();
+
+        return panelReply(interaction, 'Entry Confirmed', [
+          `You have entered the giveaway for **${giveaway.prize}**. Good luck!`
+        ]);
       }
     }
+
+    /* ---------- SELECT MENUS ---------- */
 
     if (interaction.isStringSelectMenu()) {
       const id = interaction.customId;
-      const selectedId = interaction.values[0];
+      const value = interaction.values[0];
 
-      if (id === "rover:product:edit:select") {
-        const product = productById(selectedId);
+      if (id === 'rover:purchase:select') {
+        const product = productById(value);
 
-        if (!product) {
-          return panelReply(
-            interaction,
-            "Product not found",
-            ["This product no longer exists."],
-            true
-          );
+        if (!product || product.active === false) {
+          return panelReply(interaction, 'Product Unavailable', [
+            'This product is no longer available.'
+          ]);
         }
 
-        return interaction.showModal(
-          editProductModal(product)
+        return panelReply(interaction, 'Product Details', [
+          productSummary(product),
+          product.purchaseUrl
+            ? 'Use the purchase link above to continue with the seller.'
+            : 'The seller has not added a purchase link yet.',
+          'For payment or delivery problems, contact the shop support team.'
+        ]);
+      }
+
+      if (id === 'rover:information:select') {
+        const topics = {
+          about: {
+            title: 'About Rover',
+            sections: [
+              'Rover is a shop-management assistant for digital product communities.',
+              '**Product management:** staff can create, edit and remove product records. Product information is stored in Rover’s local data file.',
+              '**Purchases:** members can privately browse products and use the seller’s purchase link. Rover does not process payments or store card details.',
+              '**Giveaways:** staff can publish giveaways, collect entries and draw random winners when the timer ends or staff end a giveaway.',
+              '**Delivery:** staff can record that a customer received a product. Rover does not automatically deliver files or grant access.',
+              '**Moderation:** authorised staff can use moderation commands, subject to Discord permissions and role hierarchy.',
+              'Rover cannot guarantee the quality, safety or availability of a seller’s products.'
+            ]
+          },
+
+          products: {
+            title: 'Products and Purchases',
+            sections: [
+              '**Browsing:** use `/purchase` and choose a product from the dropdown. The response is private.',
+              '**Before paying:** read the full description, check the listed price and category, and confirm the item is what you want.',
+              '**Purchase links:** only use links provided by trusted shop staff. Check the destination and watch out for lookalike domains.',
+              '**Payments:** Rover does not take payments, request card details or hold funds. Transactions happen with the seller or payment provider.',
+              '**Problems:** save your receipt, order confirmation and relevant messages. Contact the seller’s official support team if a listing is incorrect or an order has not arrived.',
+              '**Account security:** never provide passwords, one-time codes, backup codes or Discord account tokens.'
+            ]
+          },
+
+          delivery: {
+            title: 'Product Delivery',
+            sections: [
+              '**What staff record:** `/give-product` lets authorised staff select a product and customer. Rover records the product, customer, staff member and time.',
+              '**What the record means:** it records that staff marked a delivery as completed. It does not itself send files, generate a licence, grant permissions or verify access.',
+              '**Missing orders:** keep your proof of payment and order number, then contact the shop’s official support team privately.',
+              '**Privacy:** share receipts and order details only with trusted staff through appropriate private channels. Do not post payment details publicly.',
+              '**Notifications:** Rover attempts to DM the customer when staff record delivery. If DMs are closed, the record still exists but the notification may not be delivered.'
+            ]
+          },
+
+          giveaways: {
+            title: 'Giveaways',
+            sections: [
+              '**Entering:** press the Enter Giveaway button on an active giveaway post. Each Discord account can enter once per giveaway.',
+              '**Closing time:** the post shows a relative countdown. Authorised staff can also end a giveaway early using `/end-giveaway`.',
+              '**Winner selection:** Rover randomly selects up to the configured number of winners from unique recorded entries. If there are fewer entries than requested winners, only available entrants can win.',
+              '**Results:** Rover posts the result in the giveaway channel and attempts to DM each winner.',
+              '**Closed DMs:** if you win but do not receive a DM, check the public result and contact the giveaway host or server staff.',
+              '**Scam warning:** legitimate staff should not ask for your password, account token or payment to release a prize.'
+            ]
+          },
+
+          safety: {
+            title: 'Safety and Support',
+            sections: [
+              '**Protect your account:** never share your Discord password, login codes, backup codes or account token. Staff do not need these.',
+              '**Check links:** be cautious with shortened URLs, unexpected downloads, fake giveaways and websites impersonating trusted services.',
+              '**Impersonation:** verify staff identities and announcements in the server. Do not trust a direct message solely because it uses a familiar name or logo.',
+              '**Purchases:** review the product details and seller before paying. Keep receipts and order confirmations.',
+              '**Report concerns:** contact the server’s official support or moderation team and provide relevant evidence privately.',
+              '**Rover’s limitations:** the bot cannot guarantee a seller is trustworthy, reverse a payment or recover a compromised account.'
+            ]
+          },
+
+          terms: {
+            title: 'Terms and Refunds',
+            sections: [
+              '**Read before buying:** check the product description, price, delivery method and seller conditions before completing payment.',
+              '**Refunds:** eligibility depends on the seller’s published terms, applicable consumer law and the payment provider’s rules. Rover cannot approve or issue refunds.',
+              '**Keep evidence:** save the order confirmation, receipt, product listing and messages related to the transaction.',
+              '**Missing or incorrect items:** contact the seller’s official support team first and explain what happened, including your order reference.',
+              '**Payment disputes:** if you cannot resolve the issue with the seller, review the dispute or buyer-protection process offered by your payment provider.',
+              '**Sensitive information:** do not send full card numbers, passwords, security codes or account tokens in public channels or DMs.'
+            ]
+          }
+        };
+
+        const topic = topics[value];
+
+        if (!topic) {
+          return panelReply(interaction, 'Topic Not Found', [
+            'Choose a topic from the information menu.'
+          ]);
+        }
+
+        return panelReply(
+          interaction,
+          topic.title,
+          topic.sections,
+          true
         );
       }
 
-      if (id === "rover:product:delete:select") {
-        const product = productById(selectedId);
+      if (id === 'rover:product:edit:select') {
+        if (!await requireAdmin(interaction)) return;
+
+        const product = productById(value);
 
         if (!product) {
-          return panelReply(
-            interaction,
-            "Product not found",
-            ["This product no longer exists."],
-            true
-          );
+          return panelReply(interaction, 'Product Not Found', [
+            'This product no longer exists.'
+          ]);
         }
 
-        return interaction.reply({
-          components: [
-            makePanel("Confirm deletion", [
-              `Delete **${product.name}**? This cannot be undone.`,
-            ]),
-            new ContainerBuilder().addActionRowComponents(
-              new ActionRowBuilder().addComponents(
+        return interaction.showModal(productModal(product));
+      }
+
+      if (id === 'rover:product:delete:select') {
+        if (!await requireAdmin(interaction)) return;
+
+        const product = productById(value);
+
+        if (!product) {
+          return panelReply(interaction, 'Product Not Found', [
+            'This product no longer exists.'
+          ]);
+        }
+
+        return interaction.reply(
+          panelPayload(
+            'Confirm Product Deletion',
+            [
+              `Delete **${product.name}**?`,
+              'This cannot be undone.'
+            ],
+            true,
+            [
+              buttonRow([
                 new ButtonBuilder()
-                  .setCustomId(
-                    `rover:product:delete:confirm:${product.id}`
-                  )
-                  .setLabel("Delete product")
+                  .setCustomId(`rover:product:delete:confirm:${product.id}`)
+                  .setLabel('Delete Product')
                   .setStyle(ButtonStyle.Danger),
                 new ButtonBuilder()
-                  .setCustomId("rover:cancel")
-                  .setLabel("Cancel")
+                  .setCustomId('rover:cancel')
+                  .setLabel('Cancel')
                   .setStyle(ButtonStyle.Secondary)
-              )
-            ),
-          ],
-          flags:
-            MessageFlags.IsComponentsV2 |
-            MessageFlags.Ephemeral,
-        });
+              ])
+            ]
+          )
+        );
       }
 
-      if (id === "rover:delivery:product") {
-        const product = productById(selectedId);
+      if (id === 'rover:delivery:product') {
+        if (!await requireAdmin(interaction)) return;
+
+        const product = productById(value);
 
         if (!product) {
-          return panelReply(
-            interaction,
-            "Product not found",
-            ["This product no longer exists."],
-            true
-          );
+          return panelReply(interaction, 'Product Not Found', [
+            'This product no longer exists.'
+          ]);
         }
 
-        return interaction.reply({
-          components: [
-            makePanel("Choose customer", [
-              `Product: **${product.name}**`,
-              "Select the customer who received the product.",
-            ]),
-            new ContainerBuilder().addActionRowComponents(
-              new ActionRowBuilder().addComponents(
-                new UserSelectMenuBuilder()
-                  .setCustomId(
-                    `rover:delivery:customer:${product.id}`
+        return interaction.reply(
+          panelPayload(
+            'Choose Customer',
+            [
+              `**Product:** ${product.name}`,
+              'Select the customer who received this product.'
+            ],
+            true,
+            [
+              new ContainerBuilder()
+                .setAccentColor(PURPLE)
+                .addActionRowComponents(
+                  new ActionRowBuilder().addComponents(
+                    new UserSelectMenuBuilder()
+                      .setCustomId(`rover:delivery:customer:${product.id}`)
+                      .setPlaceholder('Choose customer')
+                      .setMinValues(1)
+                      .setMaxValues(1)
                   )
-                  .setPlaceholder("Select customer")
-                  .setMinValues(1)
-                  .setMaxValues(1)
-              )
-            ),
-          ],
-          flags:
-            MessageFlags.IsComponentsV2 |
-            MessageFlags.Ephemeral,
-        });
+                )
+            ]
+          )
+        );
       }
 
-      if (id === "rover:giveaway:end:select") {
+      if (id === 'rover:giveaway:end:select') {
+        if (!await requireAdmin(interaction)) return;
+
         const giveaway = data.giveaways.find(
-          (item) => item.id === selectedId && !item.ended
+          g => g.id === value && !g.ended
         );
 
         if (!giveaway) {
-          return panelReply(
-            interaction,
-            "Giveaway not found",
-            ["This giveaway has already ended."],
-            true
-          );
+          return panelReply(interaction, 'Giveaway Not Found', [
+            'It may already have ended.'
+          ]);
         }
 
-        await interaction.deferReply({
-          flags: MessageFlags.Ephemeral,
-        });
+        giveaway.endsAt = Date.now();
 
+        await saveData();
         await finishGiveaway(giveaway);
 
-        return panelReply(
-          interaction,
-          "Giveaway ended",
-          [`The giveaway for **${giveaway.prize}** has ended.`],
-          true
-        );
+        return panelReply(interaction, 'Giveaway Ended', [
+          `The draw for **${giveaway.prize}** has been completed.`
+        ]);
       }
     }
 
-    if (interaction.isUserSelectMenu()) {
-      if (
-        interaction.customId.startsWith(
-          "rover:delivery:customer:"
-        )
-      ) {
-        if (!(await requireAdmin(interaction))) return;
+    /* ---------- CUSTOMER SELECT ---------- */
 
-        const productId = interaction.customId.split(":").pop();
-        const product = productById(productId);
-        const customer = interaction.users.first();
+    if (
+      interaction.isUserSelectMenu() &&
+      interaction.customId.startsWith('rover:delivery:customer:')
+    ) {
+      if (!await requireAdmin(interaction)) return;
 
-        if (!product || !customer) {
-          return panelReply(
-            interaction,
-            "Delivery not recorded",
-            ["The product or customer could not be found."],
-            true
-          );
-        }
+      const productId = interaction.customId.split(':').pop();
+      const product = productById(productId);
+      const customer = interaction.users.first();
 
-        data.deliveries.push({
-          id: makeId("delivery"),
-          productId: product.id,
-          productName: product.name,
-          customerId: customer.id,
-          moderatorId: interaction.user.id,
-          createdAt: Date.now(),
-        });
+      if (!product || !customer) {
+        return panelReply(interaction, 'Delivery Not Recorded', [
+          'The product or customer could not be found.'
+        ]);
+      }
 
-        saveData();
+      data.deliveries.push({
+        id: makeId('delivery'),
+        productId: product.id,
+        productName: product.name,
+        customerId: customer.id,
+        moderatorId: interaction.user.id,
+        createdAt: Date.now()
+      });
 
-        return panelReply(
-          interaction,
-          "Delivery recorded",
-          [
-            `**Product:** ${product.name}`,
-            `**Customer:** ${customer}`,
-            "The delivery record has been saved.",
+      await saveData();
+
+      let dmSent = true;
+
+      try {
+        await customer.send({
+          components: [
+            makePanel('Product Delivery Notice', [
+              `A delivery for **${product.name}** has been recorded for your account.`,
+              'If you need help accessing the product, contact the shop support team.'
+            ])
           ],
-          true
-        );
+          flags: MessageFlags.IsComponentsV2
+        });
+      } catch {
+        dmSent = false;
       }
+
+      return panelReply(interaction, 'Delivery Recorded', [
+        `**Product:** ${product.name}`,
+        `**Customer:** ${customer.tag}`,
+        `**Customer notice:** ${dmSent ? 'Sent' : 'Could not be delivered because DMs may be closed.'}`
+      ]);
     }
+
+    /* ---------- MODAL SUBMISSIONS ---------- */
 
     if (interaction.isModalSubmit()) {
       const id = interaction.customId;
 
       if (
-        id === "rover:product:create" ||
-        id.startsWith("rover:product:edit:")
+        id === 'rover:product:create' ||
+        id.startsWith('rover:product:edit:')
       ) {
-        if (!(await requireAdmin(interaction))) return;
+        if (!await requireAdmin(interaction)) return;
 
-        const name = clean(
-          interaction.fields.getTextInputValue("name"),
-          100
-        );
-        const price = clean(
-          interaction.fields.getTextInputValue("price"),
-          80
-        );
-        const description = clean(
-          interaction.fields.getTextInputValue("description"),
-          1000
-        );
-        const purchaseUrl = clean(
-          interaction.fields.getTextInputValue("purchaseUrl"),
-          300
-        );
-        const category = clean(
-          interaction.fields.getTextInputValue("category"),
-          80
-        );
+        const productData = {
+          name: clean(interaction.fields.getTextInputValue('name'), 100),
+          price: clean(interaction.fields.getTextInputValue('price'), 80),
+          description: clean(interaction.fields.getTextInputValue('description'), 1000),
+          purchaseUrl: clean(interaction.fields.getTextInputValue('url'), 300),
+          category: clean(interaction.fields.getTextInputValue('category'), 80)
+        };
 
-        if (purchaseUrl && !validUrl(purchaseUrl)) {
-          return panelReply(
-            interaction,
-            "Invalid purchase URL",
-            ["Use a valid HTTP or HTTPS link."],
-            true
-          );
+        if (
+          productData.purchaseUrl &&
+          !validUrl(productData.purchaseUrl)
+        ) {
+          return panelReply(interaction, 'Invalid Purchase URL', [
+            'Use a valid HTTP or HTTPS link.'
+          ]);
         }
 
-        if (id === "rover:product:create") {
+        if (id === 'rover:product:create') {
           const duplicate = data.products.some(
-            (product) =>
-              product.name.toLowerCase() === name.toLowerCase()
+            product => product.name.toLowerCase() === productData.name.toLowerCase()
           );
 
           if (duplicate) {
-            return panelReply(
-              interaction,
-              "Product already exists",
-              ["Use `/edit-product` to update the existing product."],
-              true
-            );
+            return panelReply(interaction, 'Product Already Exists', [
+              'Use a unique product name or edit the existing product.'
+            ]);
           }
 
           data.products.push({
-            id: makeId("product"),
-            name,
-            price,
-            description,
-            purchaseUrl,
-            category,
+            id: makeId('product'),
+            ...productData,
             active: true,
             createdAt: Date.now(),
-            updatedAt: Date.now(),
+            updatedAt: Date.now()
           });
 
-          saveData();
+          await saveData();
 
-          return panelReply(
-            interaction,
-            "Product created",
-            [
-              `**${name}** has been added to your catalogue.`,
-              "Use `/products` to publish the updated catalogue.",
-            ],
-            true
-          );
+          return panelReply(interaction, 'Product Created', [
+            `**${productData.name}** has been added.`,
+            'It is now available through `/purchase`. Use your own product listing channels for public listings.'
+          ]);
         }
 
-        const productId = id.split(":").pop();
-        const product = productById(productId);
+        const product = productById(id.split(':').pop());
 
         if (!product) {
-          return panelReply(
-            interaction,
-            "Product not found",
-            ["This product no longer exists."],
-            true
-          );
+          return panelReply(interaction, 'Product Not Found', [
+            'This product no longer exists.'
+          ]);
         }
 
-        product.name = name;
-        product.price = price;
-        product.description = description;
-        product.purchaseUrl = purchaseUrl;
-        product.category = category;
-        product.updatedAt = Date.now();
+        Object.assign(product, productData, {
+          updatedAt: Date.now()
+        });
 
-        saveData();
+        await saveData();
 
-        return panelReply(
-          interaction,
-          "Product updated",
-          [
-            `**${name}** has been updated.`,
-            "Use `/products` to publish the updated catalogue.",
-          ],
-          true
-        );
+        return panelReply(interaction, 'Product Updated', [
+          `**${product.name}** has been updated.`
+        ]);
       }
 
-      if (id === "rover:product:search") {
-        const query = clean(
-          interaction.fields.getTextInputValue("query"),
-          100
-        ).toLowerCase();
+      if (id === 'rover:embed:create') {
+        if (!await requireAdmin(interaction)) return;
 
-        const results = data.products.filter((product) =>
-          product.active !== false &&
-          `${product.name} ${product.category || ""} ${product.description || ""}`
-            .toLowerCase()
-            .includes(query)
-        ).slice(0, 10);
-
-        return panelReply(
-          interaction,
-          "Search results",
-          [
-            results.length
-              ? results.map(productSummary).join("\n\n")
-              : `No products matched **${query}**.`,
-          ],
-          true
-        );
-      }
-
-      if (id === "rover:shop:edit") {
-        if (!(await requireAdmin(interaction))) return;
-
-        const name = clean(
-          interaction.fields.getTextInputValue("name"),
+        const title = clean(
+          interaction.fields.getTextInputValue('title'),
           100
         );
-        const description = clean(
-          interaction.fields.getTextInputValue("description"),
-          1000
+
+        const message = clean(
+          interaction.fields.getTextInputValue('message'),
+          3500
         );
-        const support = clean(
-          interaction.fields.getTextInputValue("support"),
-          300
+
+        const buttonLabel = clean(
+          interaction.fields.getTextInputValue('buttonLabel'),
+          80
         );
-        const terms = clean(
-          interaction.fields.getTextInputValue("terms"),
+
+        const url = clean(
+          interaction.fields.getTextInputValue('url'),
           300
         );
 
         if (
-          (support && !validUrl(support)) ||
-          (terms && !validUrl(terms))
+          !validUrl(url) ||
+          Boolean(buttonLabel) !== Boolean(url)
         ) {
-          return panelReply(
-            interaction,
-            "Invalid URL",
-            ["Support and terms must be valid HTTP or HTTPS links."],
-            true
-          );
+          return panelReply(interaction, 'Check Link Details', [
+            'Provide both a valid HTTP/HTTPS URL and button label, or leave both blank.'
+          ]);
         }
 
-        data.shopInfo = {
-          name,
-          description,
-          support,
-          terms,
-        };
-
-        saveData();
-
-        return panelReply(
-          interaction,
-          "Shop information saved",
-          ["Your shop details have been updated."],
-          true
-        );
-      }
-
-      if (id === "rover:embed:create") {
-        if (!(await requireAdmin(interaction))) return;
-
-        const title = clean(
-          interaction.fields.getTextInputValue("title"),
-          100
-        );
-        const description = clean(
-          interaction.fields.getTextInputValue("description"),
-          3500
-        );
-        const linkLabel = clean(
-          interaction.fields.getTextInputValue("linkLabel"),
-          80
-        );
-        const linkUrl = clean(
-          interaction.fields.getTextInputValue("linkUrl"),
-          300
-        );
-
-        if (linkUrl && !validUrl(linkUrl)) {
-          return panelReply(
-            interaction,
-            "Invalid URL",
-            ["The link must be a valid HTTP or HTTPS URL."],
-            true
-          );
-        }
-
-        if (linkLabel && !linkUrl) {
-          return panelReply(
-            interaction,
-            "Missing URL",
-            ["Provide a URL for the link button."],
-            true
-          );
-        }
-
-        const components = [
-          makePanel(title, [description]),
-        ];
-
-        if (linkLabel && linkUrl) {
-          components.push(
-            new ContainerBuilder().addActionRowComponents(
-              new ActionRowBuilder().addComponents(
+        const extras = buttonLabel
+          ? [
+              buttonRow([
                 new ButtonBuilder()
-                  .setLabel(linkLabel)
+                  .setLabel(buttonLabel)
                   .setStyle(ButtonStyle.Link)
-                  .setURL(linkUrl)
-              )
-            )
-          );
-        }
+                  .setURL(url)
+              ])
+            ]
+          : [];
 
         await interaction.channel.send({
-          components,
+          components: [
+            makePanel(title, [message]),
+            ...extras
+          ],
           flags: MessageFlags.IsComponentsV2,
+          allowedMentions: { parse: [] }
         });
 
-        return panelReply(
-          interaction,
-          "Panel published",
-          ["Your custom panel has been posted."],
-          true
-        );
+        return panelReply(interaction, 'Panel Published', [
+          'Your custom purple Components V2 panel has been posted publicly.'
+        ]);
       }
 
-      if (id === "rover:giveaway:create") {
-        if (!(await requireAdmin(interaction))) return;
+      if (id === 'rover:giveaway:create') {
+        if (!await requireAdmin(interaction)) return;
 
         const prize = clean(
-          interaction.fields.getTextInputValue("prize"),
+          interaction.fields.getTextInputValue('prize'),
           150
         );
+
         const duration = parseDuration(
-          interaction.fields.getTextInputValue("duration")
+          interaction.fields.getTextInputValue('duration')
         );
+
         const winnerCount = Number(
-          clean(
-            interaction.fields.getTextInputValue("winners"),
-            2
-          )
+          clean(interaction.fields.getTextInputValue('winners'), 2)
         );
+
         const details = clean(
-          interaction.fields.getTextInputValue("details"),
+          interaction.fields.getTextInputValue('details'),
           500
         );
 
         if (!duration) {
-          return panelReply(
-            interaction,
-            "Invalid duration",
-            ["Use `30m`, `2h` or `1d`. The maximum is 7 days."],
-            true
-          );
+          return panelReply(interaction, 'Invalid Duration', [
+            'Use `30m`, `2h` or `1d`. The maximum duration is 7 days.'
+          ]);
         }
 
         if (
@@ -1519,161 +1594,87 @@ client.on("interactionCreate", async (interaction) => {
           winnerCount < 1 ||
           winnerCount > 10
         ) {
-          return panelReply(
-            interaction,
-            "Invalid winner count",
-            ["Enter a number from 1 to 10."],
-            true
-          );
+          return panelReply(interaction, 'Invalid Winner Count', [
+            'Enter a whole number from 1 to 10.'
+          ]);
         }
 
         const giveaway = {
-          id: makeId("giveaway"),
+          id: makeId('giveaway'),
           prize,
           details,
           winnerCount,
           hostId: interaction.user.id,
+          guildId: interaction.guildId,
           channelId: interaction.channelId,
           messageId: null,
           createdAt: Date.now(),
           endsAt: Date.now() + duration,
           entrants: [],
           winners: [],
-          ended: false,
+          ended: false
         };
 
         data.giveaways.push(giveaway);
-        saveData();
+        await saveData();
 
-        await interaction.deferReply({
-          flags: MessageFlags.Ephemeral,
+        const giveawayMessage = await interaction.channel.send({
+          components: [
+            makePanel('Rover Giveaway', [
+              `**Prize:** ${prize}`,
+              details || 'Good luck to everyone entering.',
+              `**Winners:** ${winnerCount}`,
+              `**Ends:** <t:${Math.floor(giveaway.endsAt / 1000)}:R>`,
+              `Hosted by <@${interaction.user.id}>`,
+              'Press **Enter Giveaway** below. Each member can enter once.'
+            ]),
+            buttonRow([
+              new ButtonBuilder()
+                .setCustomId(`rover:giveaway:join:${giveaway.id}`)
+                .setLabel('Enter Giveaway')
+                .setStyle(ButtonStyle.Primary)
+            ])
+          ],
+          flags: MessageFlags.IsComponentsV2,
+          allowedMentions: { parse: [] }
         });
 
-        await publishGiveaway(giveaway);
+        giveaway.messageId = giveawayMessage.id;
 
-        return panelReply(
-          interaction,
-          "Giveaway published",
-          [
-            `Your giveaway for **${prize}** is now live.`,
-            `It ends <t:${Math.floor(giveaway.endsAt / 1000)}:R>.`,
-          ],
-          true
-        );
+        await saveData();
+        scheduleGiveaway(giveaway);
+
+        return panelReply(interaction, 'Giveaway Published', [
+          `The giveaway for **${prize}** is now live.`,
+          `It ends <t:${Math.floor(giveaway.endsAt / 1000)}:R>.`
+        ]);
       }
     }
   } catch (error) {
-    console.error("Interaction failed:", error);
-
-    const response = {
-      content: "Something went wrong. Check the bot console for details.",
-      flags: MessageFlags.Ephemeral,
-    };
+    console.error('Interaction error:', error);
 
     try {
-      if (interaction.deferred || interaction.replied) {
-        await interaction.followUp(response);
-      } else if (interaction.isRepliable()) {
-        await interaction.reply(response);
+      const errorMessage = {
+        content: 'Rover encountered an error. Please try again or contact an administrator.',
+        flags: MessageFlags.Ephemeral
+      };
+
+      if (interaction.isRepliable()) {
+        if (interaction.deferred || interaction.replied) {
+          await interaction.followUp(errorMessage);
+        } else {
+          await interaction.reply(errorMessage);
+        }
       }
-    } catch {}
+    } catch {
+      // Discord may reject a response if the interaction has expired.
+    }
   }
 });
 
-const giveawayTimers = new Map();
+/* -------------------- LOGIN -------------------- */
 
-async function publishGiveaway(giveaway) {
-  const channel = await client.channels
-    .fetch(giveaway.channelId)
-    .catch(() => null);
-
-  if (!channel || !channel.isTextBased()) return;
-
-  const message = await channel.send({
-    components: [
-      makePanel("Giveaway", [
-        `**Prize:** ${giveaway.prize}`,
-        giveaway.details || "",
-        `**Winners:** ${giveaway.winnerCount}`,
-        `**Ends:** <t:${Math.floor(giveaway.endsAt / 1000)}:R>`,
-        `Hosted by <@${giveaway.hostId}>`,
-      ]),
-      new ContainerBuilder().addActionRowComponents(
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`rover:giveaway:join:${giveaway.id}`)
-            .setLabel("Enter giveaway")
-            .setStyle(ButtonStyle.Primary)
-        )
-      ),
-    ],
-    flags: MessageFlags.IsComponentsV2,
-  });
-
-  giveaway.messageId = message.id;
-  saveData();
-  scheduleGiveaway(giveaway);
-}
-
-function scheduleGiveaway(giveaway) {
-  if (!giveaway || giveaway.ended) return;
-
-  if (giveawayTimers.has(giveaway.id)) {
-    clearTimeout(giveawayTimers.get(giveaway.id));
-  }
-
-  const delay = Math.max(0, giveaway.endsAt - Date.now());
-
-  giveawayTimers.set(
-    giveaway.id,
-    setTimeout(() => {
-      finishGiveaway(giveaway).catch(console.error);
-    }, delay)
-  );
-}
-
-async function finishGiveaway(giveaway) {
-  if (!giveaway || giveaway.ended) return;
-
-  giveaway.ended = true;
-
-  const entrants = [...giveaway.entrants];
-  const winners = [];
-
-  while (
-    entrants.length &&
-    winners.length < giveaway.winnerCount
-  ) {
-    const index = Math.floor(Math.random() * entrants.length);
-    winners.push(entrants.splice(index, 1)[0]);
-  }
-
-  giveaway.winners = winners;
-  saveData();
-
-  const channel = await client.channels
-    .fetch(giveaway.channelId)
-    .catch(() => null);
-
-  if (!channel || !channel.isTextBased()) return;
-
-  const result = winners.length
-    ? `Congratulations ${winners.map((id) => `<@${id}>`).join(", ")}!`
-    : "No valid entries were received.";
-
-  await channel.send({
-    components: [
-      makePanel("Giveaway results", [
-        `**Prize:** ${giveaway.prize}`,
-        result,
-        `**Entries:** ${giveaway.entrants.length}`,
-      ]),
-    ],
-    flags: MessageFlags.IsComponentsV2,
-  });
-}
-
-client.login(TOKEN).catch((error) => {
-  console.error("Discord login failed:", error);
+client.login(DISCORD_TOKEN).catch(error => {
+  console.error('Discord login failed:', error);
   process.exit(1);
 });
