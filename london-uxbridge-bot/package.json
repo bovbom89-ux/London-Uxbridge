@@ -1,6 +1,8 @@
+
 {
   "name": "rover",
   "version": "1.0.0",
+  "description": "Rover Official Store Discord Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
