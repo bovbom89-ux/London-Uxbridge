@@ -4,15 +4,30 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  Client, GatewayIntentBits, REST, Routes,
-  SlashCommandBuilder, ChannelType, PermissionFlagsBits,
-  MessageFlags, ContainerBuilder, TextDisplayBuilder,
-  SeparatorBuilder, ActionRowBuilder, ButtonBuilder,
-  ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder,
-  ModalBuilder, TextInputBuilder, TextInputStyle
+  Client,
+  GatewayIntentBits,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  ChannelType,
+  PermissionFlagsBits,
+  MessageFlags,
+  ContainerBuilder,
+  TextDisplayBuilder,
+  SeparatorBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  StringSelectMenuBuilder,
+  UserSelectMenuBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require('discord.js');
 
-const { DISCORD_TOKEN: TOKEN, DISCORD_CLIENT_ID: CLIENT_ID, DISCORD_GUILD_ID: GUILD_ID } = process.env;
+const TOKEN = process.env.DISCORD_TOKEN;
+const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
+const GUILD_ID = process.env.DISCORD_GUILD_ID;
 
 const PURPLE = 0x8B70C8;
 const FOOTER = 'Rover Official Store';
@@ -24,7 +39,9 @@ if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
   process.exit(1);
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds]
+});
 
 const defaults = () => ({
   products: [],
@@ -37,1162 +54,737 @@ const defaults = () => ({
   tickets: {},
   ticketBlacklist: [],
   reviewConfig: { channelId: null },
-  reviews: []
+  reviews: [],
+  orders: []
 });
 
-function loadData() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(DATA_DIR, { recursive: true });
 
-  if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(defaults(), null, 2));
-  }
+let data = defaults();
 
+if (fs.existsSync(DATA_FILE)) {
   try {
-    const d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    const base = defaults();
-
-    return {
-      ...base,
-      ...d,
-      products: Array.isArray(d.products) ? d.products : [],
-      giveaways: Array.isArray(d.giveaways) ? d.giveaways : [],
-      deliveries: Array.isArray(d.deliveries) ? d.deliveries : [],
-      moderation: Array.isArray(d.moderation) ? d.moderation : [],
-      roles: d.roles && typeof d.roles === 'object' ? d.roles : {},
-      rolesSetupCompleted: Boolean(d.rolesSetupCompleted),
-      ticketConfig: { ...base.ticketConfig, ...(d.ticketConfig || {}) },
-      tickets: d.tickets && typeof d.tickets === 'object' ? d.tickets : {},
-      ticketBlacklist: Array.isArray(d.ticketBlacklist) ? d.ticketBlacklist : [],
-      reviewConfig: { ...base.reviewConfig, ...(d.reviewConfig || {}) },
-      reviews: Array.isArray(d.reviews) ? d.reviews : []
-    };
+    data = { ...defaults(), ...JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')) };
   } catch (error) {
-    console.error('Could not read bot-data.json:', error);
-    console.error('Your existing data file has not been overwritten.');
-    return defaults();
+    console.error('Could not read bot-data.json. Fix the file before restarting.');
+    console.error(error);
+    process.exit(1);
   }
+} else {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-let data = loadData();
 let saveQueue = Promise.resolve();
 
 function saveData() {
-  saveQueue = saveQueue.catch(() => {}).then(() => {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-
-    const tempFile = `${DATA_FILE}.tmp`;
-    fs.writeFileSync(tempFile, JSON.stringify(data, null, 2));
-    fs.renameSync(tempFile, DATA_FILE);
+  saveQueue = saveQueue.then(async () => {
+    const temporary = `${DATA_FILE}.tmp`;
+    await fs.promises.writeFile(temporary, JSON.stringify(data, null, 2));
+    await fs.promises.rename(temporary, DATA_FILE);
   });
-
   return saveQueue;
 }
 
-const makeId = prefix =>
-  `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
-
-const clean = (value, max = 1000) =>
-  String(value ?? '').trim().slice(0, max);
-
-const activeProducts = () => data.products.filter(p =>
-  p && typeof p === 'object' &&
-  p.active !== false &&
-  typeof p.id === 'string' &&
-  typeof p.name === 'string' &&
-  p.name.trim()
-);
-
-const productById = id =>
-  data.products.find(p => p && p.id === id);
-
-const isAdmin = interaction => Boolean(
-  interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ||
-  interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)
-);
-
-function makePanel(title, sections = []) {
-  const container = new ContainerBuilder().setAccentColor(PURPLE);
-
-  container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(`# ${title}`)
-  );
-
-  for (const section of sections.filter(Boolean)) {
-    container.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(String(section))
-    );
-  }
-
-  container.addSeparatorComponents(
-    new SeparatorBuilder().setDivider(true)
-  );
-
-  container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(`-# ${FOOTER}`)
-  );
-
-  return container;
+function id() {
+  return Math.random().toString(36).slice(2, 9).toUpperCase();
 }
 
-function panelPayload(title, sections = [], ephemeral = true, extra = []) {
-  return {
-    components: [makePanel(title, sections), ...extra],
-    flags: MessageFlags.IsComponentsV2 |
-      (ephemeral ? MessageFlags.Ephemeral : 0),
-    allowedMentions: { parse: [] }
+function clean(value, max = 1000) {
+  return String(value ?? '').trim().slice(0, max);
+}
+
+function activeProducts() {
+  return data.products.filter(product => product.active !== false);
+}
+
+function productById(productId) {
+  return data.products.find(product => product.id === productId);
+}
+
+function isAdmin(member) {
+  return member?.permissions?.has(PermissionFlagsBits.Administrator) ||
+    member?.permissions?.has(PermissionFlagsBits.ManageGuild);
+}
+
+function makePanel(title, body = '', emoji = '') {
+  const panel = new ContainerBuilder().setAccentColor(PURPLE);
+  panel.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(`${emoji ? `${emoji} ` : ''}## ${title}`)
+  );
+  panel.addSeparatorComponents(new SeparatorBuilder());
+  if (body) {
+    panel.addTextDisplayComponents(new TextDisplayBuilder().setContent(body));
+  }
+  panel.addSeparatorComponents(new SeparatorBuilder());
+  panel.addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# ${FOOTER}`));
+  return panel;
+}
+
+function panelPayload(title, body = '', options = {}) {
+  const payload = {
+    components: [makePanel(title, body, options.emoji || '')],
+    flags: MessageFlags.IsComponentsV2
   };
+  if (options.ephemeral) payload.flags |= MessageFlags.Ephemeral;
+  if (options.components) payload.components.push(...options.components);
+  return payload;
 }
 
-async function reply(interaction, title, sections = [], ephemeral = true, extra = []) {
-  const response = panelPayload(title, sections, ephemeral, extra);
-
+async function reply(interaction, title, body, options = {}) {
+  const payload = panelPayload(title, body, options);
   if (interaction.deferred || interaction.replied) {
-    return interaction.editReply(response);
+    return interaction.editReply(payload);
   }
-
-  return interaction.reply(response);
+  return interaction.reply(payload);
 }
 
 async function requireAdmin(interaction) {
-  if (isAdmin(interaction)) return true;
-
-  await reply(interaction, 'Permission Required', [
-    'You need **Manage Server** or **Administrator** to use this command.'
-  ]);
-
+  if (isAdmin(interaction.member)) return true;
+  await reply(interaction, 'Permission denied', 'You need Administrator or Manage Server permissions to use this command.', { ephemeral: true });
   return false;
 }
 
-function textInput(
-  id,
-  label,
-  required = true,
-  value = '',
-  max = 1000,
-  paragraph = false
-) {
+function textInput(customId, label, style = TextInputStyle.Short, required = true, placeholder = '', maxLength = 1000) {
   const input = new TextInputBuilder()
-    .setCustomId(id)
+    .setCustomId(customId)
     .setLabel(label)
-    .setStyle(paragraph ? TextInputStyle.Paragraph : TextInputStyle.Short)
+    .setStyle(style)
     .setRequired(required)
-    .setMaxLength(max);
-
-  if (value) input.setValue(String(value).slice(0, max));
-
-  return new ActionRowBuilder().addComponents(input);
+    .setMaxLength(maxLength);
+  if (placeholder) input.setPlaceholder(placeholder);
+  return input;
 }
 
-function staffRoleId(name) {
-  return data.roles?.[name] || null;
+function modal(title, customId, fields) {
+  const result = new ModalBuilder().setTitle(title).setCustomId(customId);
+  for (const field of fields) {
+    result.addComponents(new ActionRowBuilder().addComponents(field));
+  }
+  return result;
 }
 
-function hasRole(member, names) {
-  return names.some(name => {
-    const roleId = staffRoleId(name);
-    return roleId && member?.roles?.cache?.has(roleId);
-  });
-}
-
-function canManageTickets(member) {
-  return Boolean(
-    member?.permissions?.has(PermissionFlagsBits.Administrator) ||
-    member?.permissions?.has(PermissionFlagsBits.ManageGuild) ||
-    hasRole(member, ['Owner', 'Administrator', 'Moderator', 'Support'])
-  );
-}
-
-function canBlacklistTickets(member) {
-  return Boolean(
-    member?.permissions?.has(PermissionFlagsBits.Administrator) ||
-    member?.permissions?.has(PermissionFlagsBits.ManageGuild) ||
-    hasRole(member, ['Owner', 'Administrator', 'Moderator'])
-  );
-}
-
-function productOptions(products) {
-  return products.slice(0, 25).map(product => ({
+function productOptions() {
+  return activeProducts().slice(0, 25).map(product => ({
     label: clean(product.name, 100),
-    description: clean(
-      `${product.category || 'Uncategorised'} | ${product.price || 'Price not set'}`,
-      100
-    ),
-    value: String(product.id)
+    description: clean(`${product.price} | ${product.category || 'General'}`, 100),
+    value: product.id
   }));
 }
 
-function productModal(product = null) {
-  return new ModalBuilder()
-    .setCustomId(product ? `rover:product:edit:${product.id}` : 'rover:product:create')
-    .setTitle(product ? 'Edit Store Product' : 'Create Store Product')
-    .addComponents(
-      textInput('name', 'Product name', true, product?.name || '', 100),
-      textInput('price', 'Price', true, product?.price || '', 80),
-      textInput('description', 'Full product description', true, product?.description || '', 1000, true),
-      textInput('url', 'Purchase URL (optional)', false, product?.purchaseUrl || '', 300),
-      textInput('category', 'Assets, Maps or Scripts', true, product?.category || '', 20)
-    );
+function staffRoleId() {
+  return process.env.TICKET_ESCALATION_ROLE_ID || null;
 }
 
-function giveawayModal() {
-  return new ModalBuilder()
-    .setCustomId('rover:giveaway:create')
-    .setTitle('Create a Giveaway')
-    .addComponents(
-      textInput('prize', 'Giveaway prize', true, '', 150),
-      textInput('duration', 'Duration: 30m, 2h or 1d', true, '', 20),
-      textInput('winners', 'Number of winners (1–10)', true, '1', 2),
-      textInput('details', 'Rules and extra information', false, '', 700, true)
-    );
+function hasRole(member, roleId) {
+  return Boolean(roleId && member?.roles?.cache?.has(roleId));
 }
 
-function reviewModal(productId) {
-  return new ModalBuilder()
-    .setCustomId(`rover:review:submit:${productId}`)
-    .setTitle('Submit Product Review')
-    .addComponents(
-      textInput('rating', 'Rating from 1 to 5', true, '5', 1),
-      textInput('comment', 'Your detailed review', true, '', 800, true)
-    );
-}
-
-function announceModal() {
-  return new ModalBuilder()
-    .setCustomId('rover:announce:modal')
-    .setTitle('Create Announcement')
-    .addComponents(
-      textInput('message', 'Announcement message', true, '', 1800, true),
-      textInput('username', 'Webhook display name', false, 'Rover Official Store', 80),
-      textInput('avatar', 'Webhook avatar URL (optional)', false, '', 300)
-    );
-}
-
-function parseDuration(value) {
-  const match = clean(value, 20).toLowerCase()
-    .match(/^(\d+)\s*(m|min|mins|h|hr|hrs|d|day|days)$/);
-
-  if (!match || Number(match[1]) < 1) return null;
-
-  const multiplier = match[2].startsWith('m')
-    ? 60000
-    : match[2].startsWith('h')
-      ? 3600000
-      : 86400000;
-
-  const duration = Number(match[1]) * multiplier;
-
-  return duration <= 7 * 86400000 ? duration : null;
+function canManageTickets(interaction) {
+  return isAdmin(interaction.member) ||
+    interaction.memberPermissions?.has(PermissionFlagsBits.ManageChannels) ||
+    hasRole(interaction.member, staffRoleId());
 }
 
 function ticketForChannel(channelId) {
-  return Object.values(data.tickets).find(ticket =>
-    ticket.channelId === channelId && !ticket.closed
+  return Object.values(data.tickets).find(ticket => ticket.channelId === channelId && !ticket.closed);
+}
+
+function ticketButtons(ticketId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`ticket_claim:${ticketId}`).setLabel('Claim').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`ticket_staff:${ticketId}`).setLabel('Staff Panel').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`ticket_close:${ticketId}`).setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
   );
 }
 
-function ticketButtons(ticket) {
-  const claimLabel = ticket.claimedBy
-    ? 'Claimed'
-    : 'Claim Ticket';
-
-  return new ContainerBuilder()
-    .setAccentColor(PURPLE)
-    .addActionRowComponents(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('rover:ticket:claim')
-          .setLabel(claimLabel)
-          .setStyle(ButtonStyle.Primary)
-          .setDisabled(Boolean(ticket.claimedBy)),
-
-        new ButtonBuilder()
-          .setCustomId('rover:ticket:modpanel')
-          .setLabel('Staff Panel')
-          .setStyle(ButtonStyle.Secondary),
-
-        new ButtonBuilder()
-          .setCustomId('rover:ticket:close')
-          .setLabel('Close Ticket')
-          .setStyle(ButtonStyle.Danger)
-      )
-    );
-}
-
-function ticketStaffButtons() {
-  return new ContainerBuilder()
-    .setAccentColor(PURPLE)
-    .addActionRowComponents(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('rover:ticket:escalate')
-          .setLabel('Escalate')
-          .setStyle(ButtonStyle.Primary),
-
-        new ButtonBuilder()
-          .setCustomId('rover:ticket:rename')
-          .setLabel('Rename')
-          .setStyle(ButtonStyle.Secondary),
-
-        new ButtonBuilder()
-          .setCustomId('rover:ticket:addmember')
-          .setLabel('Add Member')
-          .setStyle(ButtonStyle.Secondary),
-
-        new ButtonBuilder()
-          .setCustomId('rover:ticket:blacklist')
-          .setLabel('Blacklist Opener')
-          .setStyle(ButtonStyle.Danger)
-      )
-    );
+function ticketStaffButtons(ticketId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`ticket_escalate:${ticketId}`).setLabel('Escalate').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`ticket_rename:${ticketId}`).setLabel('Rename').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`ticket_add:${ticketId}`).setLabel('Add Member').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`ticket_blacklist:${ticketId}`).setLabel('Blacklist Opener').setStyle(ButtonStyle.Danger)
+  );
 }
 
 function informationMenu() {
-  return new StringSelectMenuBuilder()
-    .setCustomId('rover:information:select')
-    .setPlaceholder('Select an information category')
-    .addOptions(
-      { label: 'About Rover', value: 'about', description: 'Who we are and how the store works' },
-      { label: 'Products and Purchasing', value: 'products', description: 'Product types, prices and purchases' },
-      { label: 'Delivery and Order Support', value: 'delivery', description: 'Delivery process and order issues' },
-      { label: 'Giveaways and Winners', value: 'giveaways', description: 'Entering giveaways and claiming prizes' },
-      { label: 'Account Safety and Privacy', value: 'safety', description: 'Protecting your account and information' },
-      { label: 'Terms, Refunds and Disputes', value: 'terms', description: 'Store expectations and disputes' }
-    );
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('information_menu')
+      .setPlaceholder('Choose an information section')
+      .addOptions(
+        { label: 'About Rover', value: 'about' },
+        { label: 'Products and Purchasing', value: 'products' },
+        { label: 'Delivery and Order Support', value: 'delivery' },
+        { label: 'Giveaways and Winners', value: 'giveaways' },
+        { label: 'Account Safety and Privacy', value: 'safety' },
+        { label: 'Terms, Refunds and Disputes', value: 'terms' }
+      )
+  );
 }
 
-const commands = [
-  new SlashCommandBuilder()
-    .setName('ping')
-    .setDescription('Check Rover response time'),
-
-  new SlashCommandBuilder()
-    .setName('create-product')
-    .setDescription('Open the product creation panel')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-
-  new SlashCommandBuilder()
-    .setName('edit-product')
-    .setDescription('Open the product editing panel')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-
-  new SlashCommandBuilder()
-    .setName('delete-product')
-    .setDescription('Open the product removal panel')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-
-  new SlashCommandBuilder()
-    .setName('purchase')
-    .setDescription('Browse products in the Rover store'),
-
-  new SlashCommandBuilder()
-    .setName('give-product')
-    .setDescription('Open the product delivery panel')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-
-  new SlashCommandBuilder()
-    .setName('information')
-    .setDescription('Publish the detailed Rover information centre')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addChannelOption(option =>
-      option.setName('channel')
-        .setDescription('Channel for the information centre')
-        .setRequired(true)
-        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-    ),
-
-  new SlashCommandBuilder()
-    .setName('ticket')
-    .setDescription('Configure the Rover support ticket system')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(sub =>
-      sub.setName('setup')
-        .setDescription('Create or update the ticket panel')
-        .addChannelOption(option =>
-          option.setName('category')
-            .setDescription('Category where new tickets will be created')
-            .setRequired(true)
-            .addChannelTypes(ChannelType.GuildCategory)
-        )
-    ),
-
-  new SlashCommandBuilder()
-    .setName('giveaway')
-    .setDescription('Create or manage store giveaways')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(sub =>
-      sub.setName('setup').setDescription('Open the giveaway creation panel')
-    )
-    .addSubcommand(sub =>
-      sub.setName('end').setDescription('End an active giveaway')
-    ),
-
-  new SlashCommandBuilder()
-    .setName('roles')
-    .setDescription('Create or update Rover roles; use /ban to ban members')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-
-  new SlashCommandBuilder()
-    .setName('review-settings')
-    .setDescription('Set the channel where customer reviews appear')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addChannelOption(option =>
-      option.setName('channel')
-        .setDescription('Public product review channel')
-        .setRequired(true)
-        .addChannelTypes(ChannelType.GuildText)
-    ),
-
-  new SlashCommandBuilder()
-    .setName('review')
-    .setDescription('Open the customer product review panel'),
-
-  new SlashCommandBuilder()
-    .setName('announce')
-    .setDescription('Open the announcement panel')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addChannelOption(option =>
-      option.setName('channel')
-        .setDescription('Where to publish the announcement')
-        .setRequired(true)
-        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-    )
-    .addStringOption(option =>
-      option.setName('type')
-        .setDescription('Choose a normal message or a webhook message')
-        .setRequired(true)
-        .addChoices(
-          { name: 'Normal message', value: 'normal' },
-          { name: 'Webhook message', value: 'webhook' }
-        )
-    ),
-
-  new SlashCommandBuilder()
-    .setName('ban')
-    .setDescription('Ban a member from the server')
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
-    .addUserOption(option =>
-      option.setName('user').setDescription('Member to ban').setRequired(true)
-    )
-    .addStringOption(option =>
-      option.setName('reason').setDescription('Reason for the ban').setMaxLength(500)
-    ),
-
-  new SlashCommandBuilder()
-    .setName('kick')
-    .setDescription('Kick a member from the server')
-    .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
-    .addUserOption(option =>
-      option.setName('user').setDescription('Member to kick').setRequired(true)
-    )
-    .addStringOption(option =>
-      option.setName('reason').setDescription('Reason for the kick').setMaxLength(500)
-    ),
-
-  new SlashCommandBuilder()
-    .setName('timeout')
-    .setDescription('Timeout a member')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
-    .addUserOption(option =>
-      option.setName('user').setDescription('Member to timeout').setRequired(true)
-    )
-    .addIntegerOption(option =>
-      option.setName('minutes').setDescription('Timeout length in minutes')
-        .setRequired(true).setMinValue(1).setMaxValue(40320)
-    )
-    .addStringOption(option =>
-      option.setName('reason').setDescription('Reason for the timeout').setMaxLength(500)
-    )
-];
-
-const giveawayTimers = new Map();
-
-function scheduleGiveaway(giveaway) {
-  if (!giveaway || giveaway.ended) return;
-
-  clearTimeout(giveawayTimers.get(giveaway.id));
-
-  const delay = Math.max(0, giveaway.endsAt - Date.now());
-
-  giveawayTimers.set(giveaway.id, setTimeout(() => {
-    finishGiveaway(giveaway).catch(console.error);
-  }, Math.min(delay, 2147000000)));
+function productModal(product = null) {
+  return modal(product ? 'Edit Product' : 'Create Product', product ? `product_edit:${product.id}` : 'product_create', [
+    Object.assign(textInput('name', 'Product name', TextInputStyle.Short, true, 'Product name', 100), product ? { value: product.name } : {}),
+    Object.assign(textInput('price', 'Price', TextInputStyle.Short, true, 'Example: 100 Robux or £5', 100), product ? { value: product.price } : {}),
+    Object.assign(textInput('description', 'Description', TextInputStyle.Paragraph, true, 'Describe the product', 1000), product ? { value: product.description } : {}),
+    Object.assign(textInput('purchaseUrl', 'Purchase URL (optional)', TextInputStyle.Short, false, 'https://...', 500), product ? { value: product.purchaseUrl || '' } : {}),
+    Object.assign(textInput('category', 'Category', TextInputStyle.Short, true, 'Scripts, Maps, Assets, etc.', 100), product ? { value: product.category || 'General' } : {})
+  ]);
 }
 
-async function updateGiveawayMessage(giveaway, ended = false) {
-  const channel = await client.channels.fetch(giveaway.channelId).catch(() => null);
-  if (!channel?.isTextBased()) return;
+function giveawayModal() {
+  return modal('Create Giveaway', 'giveaway_create', [
+    textInput('prize', 'Prize', TextInputStyle.Short, true, 'What is being given away?', 100),
+    textInput('details', 'Details', TextInputStyle.Paragraph, false, 'Optional details', 1000),
+    textInput('duration', 'Duration', TextInputStyle.Short, true, 'Examples: 30m, 2h, 3d', 20),
+    textInput('winners', 'Number of winners', TextInputStyle.Short, true, '1', 2)
+  ]);
+}
 
-  const message = giveaway.messageId
-    ? await channel.messages.fetch(giveaway.messageId).catch(() => null)
-    : null;
+function reviewModal(productId) {
+  return modal('Leave a Review', `review_submit:${productId}`, [
+    textInput('rating', 'Rating from 1 to 5', TextInputStyle.Short, true, '5', 1),
+    textInput('comment', 'Your review', TextInputStyle.Paragraph, true, 'Tell others about your experience', 1000)
+  ]);
+}
 
-  if (!message) return;
+function parseDuration(value) {
+  const match = /^(\d+)\s*(m|min|mins|h|hr|hrs|d|day|days)$/i.exec(String(value).trim());
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  const multiplier = unit.startsWith('m') ? 60000 : unit.startsWith('h') ? 3600000 : 86400000;
+  const duration = amount * multiplier;
+  if (!Number.isFinite(duration) || duration < 60000 || duration > 7 * 86400000) return null;
+  return duration;
+}
 
-  const winnerText = ended
-    ? (giveaway.winners?.length
-      ? giveaway.winners.map(id => `<@${id}>`).join(', ')
-      : 'No eligible entries.')
-    : 'Not selected yet';
+function averageRating(productId) {
+  const reviews = data.reviews.filter(review => review.productId === productId);
+  if (!reviews.length) return 'No reviews yet';
+  return `${(reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length).toFixed(1)}/5 (${reviews.length} review${reviews.length === 1 ? '' : 's'})`;
+}
 
-  const sections = [
+async function publishReview(interaction, review) {
+  const channel = await interaction.guild.channels.fetch(data.reviewConfig.channelId).catch(() => null);
+  if (!channel || !channel.isTextBased()) return;
+
+  const product = productById(review.productId);
+  const body = [
+    `**Product:** ${product?.name || review.productName}`,
+    `**Rating:** ${'★'.repeat(review.rating)}${'☆'.repeat(5 - review.rating)} (${review.rating}/5)`,
+    `**Customer:** <@${review.userId}>`,
+    `**Review:** ${review.comment}`,
+    `**Product average:** ${averageRating(review.productId)}`
+  ].join('\n');
+
+  await channel.send(panelPayload('Customer Review', body, { emoji: '<:Star:1561125940598149261>' }));
+}
+
+function giveawayPayload(giveaway) {
+  const body = [
     `**Prize:** ${giveaway.prize}`,
-    giveaway.details ? `**Details:**\n${giveaway.details}` : '',
-    `**Entries:** ${(giveaway.entrants || []).length}`,
-    `**Winner:** ${winnerText}`,
-    ended
-      ? `**Status:** Ended <t:${Math.floor((giveaway.endedAt || Date.now()) / 1000)}:R>`
-      : `**Ends:** <t:${Math.floor(giveaway.endsAt / 1000)}:R>`,
-    `**Winners to draw:** ${giveaway.winnerCount}`
+    giveaway.details ? `**Details:** ${giveaway.details}` : '',
+    `**Winners:** ${giveaway.winnerCount}`,
+    giveaway.ended
+      ? `**Status:** Ended\n**Winner(s):** ${giveaway.winners?.length ? giveaway.winners.map(userId => `<@${userId}>`).join(', ') : 'No eligible entrants.'}`
+      : `**Ends:** <t:${Math.floor(giveaway.endsAt / 1000)}:R>\n**Entries:** ${giveaway.entrants.length}`
+  ].filter(Boolean).join('\n');
+
+  const rows = giveaway.ended ? [] : [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`giveaway_enter:${giveaway.id}`).setLabel('Enter Giveaway').setStyle(ButtonStyle.Primary)
+    )
   ];
 
-  const components = [
-    makePanel(ended ? 'Rover Giveaway — Ended' : 'Rover Giveaway', sections)
-  ];
-
-  if (!ended) {
-    components.push(
-      new ContainerBuilder()
-        .setAccentColor(PURPLE)
-        .addActionRowComponents(
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId('rover:giveaway:join')
-              .setLabel('Enter Giveaway')
-              .setStyle(ButtonStyle.Primary)
-          )
-        )
-    );
-  }
-
-  await message.edit({
-    components,
-    flags: MessageFlags.IsComponentsV2,
-    allowedMentions: { parse: [] }
-  }).catch(console.error);
+  return panelPayload('Rover Giveaway', body, { emoji: '<:Gift:1561126127861239929>', components: rows });
 }
 
-async function finishGiveaway(giveaway) {
+async function endGiveaway(giveawayId) {
+  const giveaway = data.giveaways.find(item => item.id === giveawayId);
   if (!giveaway || giveaway.ended) return;
 
   giveaway.ended = true;
-  giveaway.endedAt = Date.now();
-
-  clearTimeout(giveawayTimers.get(giveaway.id));
-  giveawayTimers.delete(giveaway.id);
-
-  const eligible = [...new Set(giveaway.entrants || [])];
+  const entrants = [...new Set(giveaway.entrants)];
   const winners = [];
 
-  while (eligible.length && winners.length < giveaway.winnerCount) {
-    const index = Math.floor(Math.random() * eligible.length);
-    winners.push(eligible.splice(index, 1)[0]);
+  while (entrants.length && winners.length < giveaway.winnerCount) {
+    const index = Math.floor(Math.random() * entrants.length);
+    winners.push(entrants.splice(index, 1)[0]);
   }
 
   giveaway.winners = winners;
   await saveData();
-  await updateGiveawayMessage(giveaway, true);
 
-  for (const userId of winners) {
-    const user = await client.users.fetch(userId).catch(() => null);
-    if (!user) continue;
-
-    await user.send({
-      components: [
-        makePanel('You Won a Rover Giveaway', [
-          `Congratulations! You won **${giveaway.prize}**.`,
-          'Please contact the Rover team to arrange collection of your prize.',
-          'Never share your password or account verification codes.'
-        ])
-      ],
-      flags: MessageFlags.IsComponentsV2
-    }).catch(() => {});
+  const channel = await client.channels.fetch(giveaway.channelId).catch(() => null);
+  if (channel?.isTextBased() && giveaway.messageId) {
+    const message = await channel.messages.fetch(giveaway.messageId).catch(() => null);
+    if (message) await message.edit(giveawayPayload(giveaway)).catch(console.error);
+    if (winners.length) {
+      await channel.send(`Giveaway ended! Congratulations ${winners.map(userId => `<@${userId}>`).join(', ')} — you won **${giveaway.prize}**!`).catch(console.error);
+    } else {
+      await channel.send(`The giveaway for **${giveaway.prize}** has ended with no eligible entrants.`).catch(console.error);
+    }
   }
 }
 
+function scheduleGiveaway(giveaway) {
+  if (giveaway.ended) return;
+  const delay = Math.max(0, giveaway.endsAt - Date.now());
+  setTimeout(() => endGiveaway(giveaway.id).catch(console.error), Math.min(delay, 2147483647));
+}
+
+const commands = [
+  new SlashCommandBuilder().setName('ping').setDescription('Check whether Rover is online.'),
+  new SlashCommandBuilder().setName('create-product').setDescription('Create a store product.'),
+  new SlashCommandBuilder().setName('edit-product').setDescription('Edit an existing product.'),
+  new SlashCommandBuilder().setName('delete-product').setDescription('Remove a product from the catalogue.'),
+  new SlashCommandBuilder().setName('purchase').setDescription('Browse available store products.'),
+  new SlashCommandBuilder().setName('give-product').setDescription('Deliver a product to a customer.'),
+  new SlashCommandBuilder().setName('my-orders').setDescription('View your recorded product deliveries.'),
+  new SlashCommandBuilder().setName('information').setDescription('Open the Rover information menu.'),
+  new SlashCommandBuilder().setName('ticket').setDescription('Configure the support ticket system.')
+    .addSubcommand(sub => sub.setName('setup').setDescription('Set up the support ticket panel.')
+      .addChannelOption(option => option.setName('category').setDescription('Category for ticket channels.').addChannelTypes(ChannelType.GuildCategory).setRequired(true))),
+  new SlashCommandBuilder().setName('giveaway').setDescription('Manage store giveaways.')
+    .addSubcommand(sub => sub.setName('setup').setDescription('Create a giveaway.'))
+    .addSubcommand(sub => sub.setName('end').setDescription('End a giveaway early.')
+      .addStringOption(option => option.setName('id').setDescription('Giveaway ID.').setRequired(true))),
+  new SlashCommandBuilder().setName('roles').setDescription('Create or update Rover staff and customer roles.'),
+  new SlashCommandBuilder().setName('review-settings').setDescription('Set the public review channel.')
+    .addChannelOption(option => option.setName('channel').setDescription('Channel for customer reviews.').addChannelTypes(ChannelType.GuildText).setRequired(true)),
+  new SlashCommandBuilder().setName('review').setDescription('Review a product you have received.'),
+  new SlashCommandBuilder().setName('review-remove').setDescription('Moderate and remove a customer review.')
+    .addStringOption(option => option.setName('id').setDescription('Review ID.').setRequired(true)),
+  new SlashCommandBuilder().setName('announce').setDescription('Send a plain-text webhook announcement.')
+    .addStringOption(option => option.setName('message').setDescription('The announcement text.').setRequired(true)),
+  new SlashCommandBuilder().setName('ban').setDescription('Ban a member.')
+    .addUserOption(option => option.setName('user').setDescription('Member to ban.').setRequired(true))
+    .addStringOption(option => option.setName('reason').setDescription('Reason for the ban.').setRequired(true)),
+  new SlashCommandBuilder().setName('kick').setDescription('Kick a member.')
+    .addUserOption(option => option.setName('user').setDescription('Member to kick.').setRequired(true))
+    .addStringOption(option => option.setName('reason').setDescription('Reason for the kick.').setRequired(true)),
+  new SlashCommandBuilder().setName('timeout').setDescription('Timeout a member.')
+    .addUserOption(option => option.setName('user').setDescription('Member to timeout.').setRequired(true))
+    .addIntegerOption(option => option.setName('minutes').setDescription('Timeout duration in minutes.').setRequired(true).setMinValue(1).setMaxValue(40320))
+    .addStringOption(option => option.setName('reason').setDescription('Reason for the timeout.').setRequired(true))
+].map(command => command.toJSON());
+
 client.once('clientReady', async () => {
-  console.log(`Rover is online as ${client.user.tag}`);
+  console.log(`Rover is online as ${client.user.tag}.`);
 
   try {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
-
-    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), {
-      body: commands.map(command => command.toJSON())
-    });
-
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
     console.log(`Registered ${commands.length} Rover slash commands.`);
-
-    for (const giveaway of data.giveaways) {
-      if (!giveaway.ended) scheduleGiveaway(giveaway);
-    }
   } catch (error) {
-    console.error('Slash command registration failed:', error);
+    console.error('Command registration failed:', error);
   }
+
+  for (const giveaway of data.giveaways) scheduleGiveaway(giveaway);
 });
 
 client.on('interactionCreate', async interaction => {
   try {
     if (interaction.isChatInputCommand()) {
-      switch (interaction.commandName) {
-        case 'ping':
-          return reply(interaction, 'Rover System Status', [
-            `**Bot:** Online`,
-            `**Latency:** ${client.ws.ping} ms`,
-            `**Products:** ${activeProducts().length}`,
-            `**Active giveaways:** ${data.giveaways.filter(g => !g.ended).length}`,
-            `**Open tickets:** ${Object.values(data.tickets).filter(t => !t.closed).length}`
-          ]);
+      const command = interaction.commandName;
 
-        case 'create-product': {
-          if (!await requireAdmin(interaction)) return;
-
-          return reply(interaction, 'Create a Store Product', [
-            'Use the button below to open the product builder.',
-            '',
-            '**Product details**',
-            'Enter the product name, price, full description, category and optional purchase URL.',
-            '',
-            '**Categories**',
-            'Assets, Maps and Scripts.',
-            '',
-            'Your product will be saved in Rover’s product catalogue and can then be selected through `/purchase`.'
-          ], true, [
-            new ContainerBuilder().setAccentColor(PURPLE)
-              .addActionRowComponents(new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                  .setCustomId('rover:product:create:open')
-                  .setLabel('Create Product')
-                  .setStyle(ButtonStyle.Primary)
-              ))
-          ]);
-        }
-
-        case 'edit-product': {
-          if (!await requireAdmin(interaction)) return;
-
-          const products = activeProducts();
-          if (!products.length) {
-            return reply(interaction, 'No Products Found', [
-              'Create a product before opening the editing panel.'
-            ]);
-          }
-
-          return reply(interaction, 'Edit a Store Product', [
-            'Select the product you want to update.',
-            'You can change its name, price, description, purchase link and category.'
-          ], true, [
-            new ContainerBuilder().setAccentColor(PURPLE)
-              .addActionRowComponents(new ActionRowBuilder().addComponents(
-                new StringSelectMenuBuilder()
-                  .setCustomId('rover:product:edit:select')
-                  .setPlaceholder('Choose a product')
-                  .addOptions(productOptions(products))
-              ))
-          ]);
-        }
-
-        case 'delete-product': {
-          if (!await requireAdmin(interaction)) return;
-
-          const products = activeProducts();
-          if (!products.length) {
-            return reply(interaction, 'No Products Found', [
-              'There are no products in the catalogue to remove.'
-            ]);
-          }
-
-          return reply(interaction, 'Remove a Store Product', [
-            'Select the product to delete.',
-            'This removes it from the active catalogue. Previously recorded delivery and review history is retained.'
-          ], true, [
-            new ContainerBuilder().setAccentColor(PURPLE)
-              .addActionRowComponents(new ActionRowBuilder().addComponents(
-                new StringSelectMenuBuilder()
-                  .setCustomId('rover:product:delete:select')
-                  .setPlaceholder('Choose a product')
-                  .addOptions(productOptions(products))
-              ))
-          ]);
-        }
-
-        case 'purchase': {
-          const products = activeProducts();
-
-          if (!products.length) {
-            return reply(interaction, 'Rover Product Catalogue', [
-              'There are currently no products available.',
-              'Please check back later or contact the store team.'
-            ]);
-          }
-
-          return reply(interaction, 'Rover Product Catalogue', [
-            'Welcome to the Rover Official Store.',
-            'Choose a product below to see its full description, category, price and purchase link.',
-            '',
-            `**Available products:** ${products.length}`
-          ], true, [
-            new ContainerBuilder().setAccentColor(PURPLE)
-              .addActionRowComponents(new ActionRowBuilder().addComponents(
-                new StringSelectMenuBuilder()
-                  .setCustomId('rover:product:view')
-                  .setPlaceholder('Select a product')
-                  .addOptions(productOptions(products))
-              ))
-          ]);
-        }
-
-        case 'give-product': {
-          if (!await requireAdmin(interaction)) return;
-
-          const products = activeProducts();
-
-          if (!products.length) {
-            return reply(interaction, 'No Products Available', [
-              'Create a product before delivering it to a customer.'
-            ]);
-          }
-
-          return reply(interaction, 'Product Delivery Centre', [
-            'Use this panel to select a product and a customer.',
-            '',
-            '**What happens next?**',
-            '1. Select the product.',
-            '2. Select the customer.',
-            '3. Confirm the delivery.',
-            '4. Rover records the delivery and attempts to DM the customer with the product details.',
-            '',
-            'Recorded deliveries can be used to verify customer product reviews.'
-          ], true, [
-            new ContainerBuilder().setAccentColor(PURPLE)
-              .addActionRowComponents(new ActionRowBuilder().addComponents(
-                new StringSelectMenuBuilder()
-                  .setCustomId('rover:delivery:product')
-                  .setPlaceholder('Step 1 — Select product')
-                  .addOptions(productOptions(products))
-              ))
-          ]);
-        }
-
-        case 'information': {
-          if (!await requireAdmin(interaction)) return;
-
-          const channel = interaction.options.getChannel('channel', true);
-
-          const panel = panelPayload('Rover Official Store | Information Centre', [
-            'Welcome to **Rover Official Store**.',
-            'This information centre explains how the store works, how to browse products, what to expect from delivery, how giveaways operate and how to get help.',
-            '',
-            '**Please read the relevant section before purchasing or opening a support ticket.**',
-            'Choose a topic below to view the full information.'
-          ], false, [
-            new ContainerBuilder().setAccentColor(PURPLE)
-              .addActionRowComponents(new ActionRowBuilder().addComponents(informationMenu()))
-          ]);
-
-          await channel.send(panel);
-
-          return reply(interaction, 'Information Centre Published', [
-            `The information centre has been published in ${channel}.`
-          ]);
-        }
-
-        case 'ticket': {
-          if (!await requireAdmin(interaction)) return;
-
-          const category = interaction.options.getChannel('category', true);
-
-          data.ticketConfig.categoryId = category.id;
-          data.ticketConfig.panelChannelId = interaction.channelId;
-          await saveData();
-
-          await interaction.channel.send(
-            panelPayload('Rover Customer Support', [
-              'Welcome to Rover Support.',
-              '',
-              '**When should I open a ticket?**',
-              'Open a ticket for product questions, order or delivery problems, purchase assistance, account-related store enquiries or other matters that require staff support.',
-              '',
-              '**Before opening a ticket**',
-              'Explain your issue clearly and provide any relevant order reference. Please do not share passwords, authentication codes, tokens or full payment-card details.',
-              '',
-              'A private channel will be created for you and authorised staff. Please be patient while your request is reviewed.'
-            ], false, [
-              new ContainerBuilder().setAccentColor(PURPLE)
-                .addActionRowComponents(new ActionRowBuilder().addComponents(
-                  new ButtonBuilder()
-                    .setCustomId('rover:ticket:open')
-                    .setLabel('Open Support Ticket')
-                    .setStyle(ButtonStyle.Primary)
-                ))
-            ])
-          );
-
-          return reply(interaction, 'Ticket System Configured', [
-            `Ticket category: **${category.name}**`,
-            'The support panel has been published.',
-            'Run `/ticket setup` again whenever you need to change the category or publish another panel.'
-          ]);
-        }
-
-        case 'giveaway': {
-          if (!await requireAdmin(interaction)) return;
-
-          if (interaction.options.getSubcommand() === 'setup') {
-            return reply(interaction, 'Giveaway Management', [
-              'Create a giveaway with a prize, duration, number of winners and additional rules.',
-              '',
-              '**Entry tracking**',
-              'When a member enters, the entry count increases. The entry count is separate from the winner field.',
-              '',
-              '**Automatic ending**',
-              'When the giveaway ends, the original post remains in the channel. Its winner field is updated with the randomly selected winner or winners.'
-            ], true, [
-              new ContainerBuilder().setAccentColor(PURPLE)
-                .addActionRowComponents(new ActionRowBuilder().addComponents(
-                  new ButtonBuilder()
-                    .setCustomId('rover:giveaway:open')
-                    .setLabel('Configure Giveaway')
-                    .setStyle(ButtonStyle.Primary)
-                ))
-            ]);
-          }
-
-          const active = data.giveaways.filter(g => !g.ended);
-
-          if (!active.length) {
-            return reply(interaction, 'No Active Giveaways', [
-              'There are no active giveaways to end.'
-            ]);
-          }
-
-          return reply(interaction, 'End a Giveaway', [
-            'Select the giveaway you want to end.',
-            'Rover will randomly select winners from the recorded entries and update the original giveaway post.'
-          ], true, [
-            new ContainerBuilder().setAccentColor(PURPLE)
-              .addActionRowComponents(new ActionRowBuilder().addComponents(
-                new StringSelectMenuBuilder()
-                  .setCustomId('rover:giveaway:end:select')
-                  .setPlaceholder('Choose a giveaway')
-                  .addOptions(active.slice(0, 25).map(g => ({
-                    label: clean(g.prize, 100),
-                    description: `${(g.entrants || []).length} entries`,
-                    value: g.id
-                  })))
-              ))
-          ]);
-        }
-
-        case 'roles': {
-          if (!await requireAdmin(interaction)) return;
-
-          const definitions = [
-            { name: 'Owner', permissions: [PermissionFlagsBits.Administrator] },
-            { name: 'Administrator', permissions: [PermissionFlagsBits.ManageGuild, PermissionFlagsBits.ManageChannels] },
-            { name: 'Moderator', permissions: [PermissionFlagsBits.KickMembers, PermissionFlagsBits.BanMembers, PermissionFlagsBits.ModerateMembers] },
-            { name: 'Support', permissions: [] },
-            { name: 'Customer', permissions: [] },
-            { name: 'Verified', permissions: [] },
-            { name: 'Member', permissions: [] },
-            { name: 'Muted', permissions: [] }
-          ];
-
-          const results = [];
-
-          for (const definition of definitions) {
-            let role = interaction.guild.roles.cache.find(r => r.name === definition.name);
-
-            if (!role) {
-              role = await interaction.guild.roles.create({
-                name: definition.name,
-                permissions: definition.permissions,
-                reason: 'Rover role setup'
-              });
-
-              results.push(`Created **${role.name}**.`);
-            } else {
-              await role.setPermissions(definition.permissions, 'Rover role setup refresh')
-                .catch(() => {});
-
-              results.push(`Updated existing **${role.name}**.`);
-            }
-
-            data.roles[definition.name] = role.id;
-          }
-
-          data.rolesSetupCompleted = true;
-          await saveData();
-
-          return reply(interaction, 'Rover Roles Setup', [
-            'The role setup has completed successfully.',
-            '',
-            ...results,
-            '',
-            '**Safe to run again:** `/roles` reuses existing roles with matching names instead of creating duplicates.',
-            '',
-            '**Moderation:** Use `/ban` to ban a member. The Owner role grants administrator permissions, so only give it to trusted people.'
-          ]);
-        }
-
-        case 'review-settings': {
-          if (!await requireAdmin(interaction)) return;
-
-          const channel = interaction.options.getChannel('channel', true);
-
-          data.reviewConfig.channelId = channel.id;
-          await saveData();
-
-          return reply(interaction, 'Review Channel Configured', [
-            `Customer reviews will be published in ${channel}.`,
-            'Reviews submitted through the review panel will be recorded against the selected product.'
-          ]);
-        }
-
-        case 'review': {
-          const products = activeProducts();
-
-          if (!products.length) {
-            return reply(interaction, 'Customer Reviews', [
-              'There are no active products to review at the moment.'
-            ]);
-          }
-
-          return reply(interaction, 'Rover Customer Reviews', [
-            'Share your experience with a Rover product.',
-            '',
-            '**Who can review?**',
-            'Reviews are restricted to customers with a recorded delivery for the selected product.',
-            '',
-            '**How it works**',
-            '1. Select your product.',
-            '2. Enter a rating from 1 to 5.',
-            '3. Write a helpful, honest review.',
-            '',
-            'Only one review per customer per product is accepted.'
-          ], true, [
-            new ContainerBuilder().setAccentColor(PURPLE)
-              .addActionRowComponents(new ActionRowBuilder().addComponents(
-                new StringSelectMenuBuilder()
-                  .setCustomId('rover:review:product')
-                  .setPlaceholder('Select a product to review')
-                  .addOptions(productOptions(products))
-              ))
-          ]);
-        }
-
-        case 'announce': {
-          if (!await requireAdmin(interaction)) return;
-
-          const channel = interaction.options.getChannel('channel', true);
-          const type = interaction.options.getString('type', true);
-
-          return reply(interaction, 'Announcement Composer', [
-            `**Destination:** ${channel}`,
-            `**Message type:** ${type === 'webhook' ? 'Webhook message' : 'Normal message'}`,
-            '',
-            type === 'webhook'
-              ? 'A webhook message uses a custom display name and optional avatar. Clicking its profile will not open the Rover bot profile.'
-              : 'A normal message is sent by Rover using its regular bot identity.',
-            '',
-            'Press the button to compose your announcement.'
-          ], true, [
-            new ContainerBuilder().setAccentColor(PURPLE)
-              .addActionRowComponents(new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                  .setCustomId(`rover:announce:open:${channel.id}:${type}`)
-                  .setLabel('Compose Announcement')
-                  .setStyle(ButtonStyle.Primary)
-              ))
-          ]);
-        }
-
-        case 'ban':
-        case 'kick':
-        case 'timeout': {
-          const user = interaction.options.getUser('user', true);
-          const reason = interaction.options.getString('reason') || 'No reason provided.';
-          const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-
-          if (!member) {
-            return reply(interaction, 'Member Not Found', [
-              'The selected user is not currently a member of this server.'
-            ]);
-          }
-
-          if (user.id === interaction.user.id || user.id === client.user.id) {
-            return reply(interaction, 'Invalid Target', [
-              'You cannot perform this action on yourself or Rover.'
-            ]);
-          }
-
-          if (interaction.commandName === 'ban' && !interaction.memberPermissions.has(PermissionFlagsBits.BanMembers)) {
-            return reply(interaction, 'Permission Required', ['You need the **Ban Members** permission.']);
-          }
-
-          if (interaction.commandName === 'kick' && !interaction.memberPermissions.has(PermissionFlagsBits.KickMembers)) {
-            return reply(interaction, 'Permission Required', ['You need the **Kick Members** permission.']);
-          }
-
-          if (interaction.commandName === 'timeout' && !interaction.memberPermissions.has(PermissionFlagsBits.ModerateMembers)) {
-            return reply(interaction, 'Permission Required', ['You need the **Moderate Members** permission.']);
-          }
-
-          if (interaction.commandName === 'ban') {
-            await user.send(panelPayload('Server Moderation Notice', [
-              `You were banned from **${interaction.guild.name}**.`,
-              `**Reason:** ${reason}`
-            ])).catch(() => {});
-
-            await member.ban({ reason: `${reason} | By ${interaction.user.tag}` });
-          } else if (interaction.commandName === 'kick') {
-            await user.send(panelPayload('Server Moderation Notice', [
-              `You were kicked from **${interaction.guild.name}**.`,
-              `**Reason:** ${reason}`
-            ])).catch(() => {});
-
-            await member.kick(`${reason} | By ${interaction.user.tag}`);
-          } else {
-            const minutes = interaction.options.getInteger('minutes', true);
-
-            await user.send(panelPayload('Server Moderation Notice', [
-              `You were timed out in **${interaction.guild.name}**.`,
-              `**Duration:** ${minutes} minutes`,
-              `**Reason:** ${reason}`
-            ])).catch(() => {});
-
-            await member.timeout(minutes * 60000, `${reason} | By ${interaction.user.tag}`);
-          }
-
-          data.moderation.push({
-            id: makeId('moderation'),
-            action: interaction.commandName,
-            userId: user.id,
-            moderatorId: interaction.user.id,
-            guildId: interaction.guildId,
-            reason,
-            timestamp: Date.now()
-          });
-
-          await saveData();
-
-          return reply(interaction, 'Moderation Action Completed', [
-            `**Action:** ${interaction.commandName}`,
-            `**Member:** ${user.tag}`,
-            `**Reason:** ${reason}`
-          ]);
-        }
+      if (command === 'ping') {
+        return reply(interaction, 'Rover is online', `Latency: ${client.ws.ping}ms.`);
       }
-    }
 
-    if (interaction.isButton()) {
-      if (interaction.customId === 'rover:product:create:open') {
+      if (command === 'create-product') {
         if (!await requireAdmin(interaction)) return;
         return interaction.showModal(productModal());
       }
 
-      if (interaction.customId === 'rover:giveaway:open') {
+      if (command === 'edit-product') {
         if (!await requireAdmin(interaction)) return;
-        return interaction.showModal(giveawayModal());
+        const options = productOptions();
+        if (!options.length) return reply(interaction, 'No products', 'Create a product first.', { ephemeral: true });
+        return interaction.reply({
+          content: 'Choose a product to edit.',
+          components: [new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder().setCustomId('product_edit_select').setPlaceholder('Choose a product').addOptions(options)
+          )],
+          flags: MessageFlags.Ephemeral
+        });
       }
 
-      if (interaction.customId.startsWith('rover:announce:open:')) {
+      if (command === 'delete-product') {
         if (!await requireAdmin(interaction)) return;
-
-        const [, , , channelId, type] = interaction.customId.split(':');
-
-        const modal = announceModal();
-        modal.setCustomId(`rover:announce:modal:${channelId}:${type}`);
-
-        return interaction.showModal(modal);
+        const options = productOptions();
+        if (!options.length) return reply(interaction, 'No products', 'There are no active products to delete.', { ephemeral: true });
+        return interaction.reply({
+          content: 'Choose a product to remove.',
+          components: [new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder().setCustomId('product_delete_select').setPlaceholder('Choose a product').addOptions(options)
+          )],
+          flags: MessageFlags.Ephemeral
+        });
       }
 
-      if (interaction.customId === 'rover:ticket:open') {
+      if (command === 'purchase') {
+        const options = productOptions();
+        if (!options.length) return reply(interaction, 'Catalogue', 'There are currently no products available.');
+        return reply(interaction, 'Store Catalogue', 'Choose a product below to view its details and purchasing information.', {
+          emoji: '<:Shopping:1561126149789323335>',
+          components: [new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder().setCustomId('purchase_select').setPlaceholder('Browse products').addOptions(options)
+          )]
+        });
+      }
+
+      if (command === 'give-product') {
+        if (!await requireAdmin(interaction)) return;
+        const options = productOptions();
+        if (!options.length) return reply(interaction, 'No products', 'Create a product before delivering it.', { ephemeral: true });
+        return interaction.reply({
+          content: 'Select the product to deliver.',
+          components: [new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder().setCustomId('deliver_product_select').setPlaceholder('Choose product').addOptions(options)
+          )],
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      if (command === 'my-orders') {
+        const orders = data.deliveries.filter(order => order.customerId === interaction.user.id);
+        if (!orders.length) return reply(interaction, 'My Orders', 'No completed deliveries have been recorded for your account.', { ephemeral: true });
+        const body = orders.slice(-15).reverse().map(order =>
+          `**${order.productName}**\nOrder: \`${order.id}\` • <t:${Math.floor(order.timestamp / 1000)}:R>`
+        ).join('\n\n');
+        return reply(interaction, 'My Orders', body, { ephemeral: true });
+      }
+
+      if (command === 'information') {
+        return reply(interaction, 'Rover Information', 'Choose a section from the menu below to learn more about Rover Official Store.', {
+          components: [informationMenu()]
+        });
+      }
+
+      if (command === 'ticket') {
+        if (!await requireAdmin(interaction)) return;
+        const category = interaction.options.getChannel('category');
+        data.ticketConfig.categoryId = category.id;
+        data.ticketConfig.panelChannelId = interaction.channelId;
+        await saveData();
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('ticket_open').setLabel('Open Support Ticket').setStyle(ButtonStyle.Primary)
+        );
+
+        await interaction.channel.send(panelPayload(
+          'Customer Support',
+          'Need help with a purchase, delivery or another store issue? Open a ticket and our team will assist you.',
+          { emoji: '<:Ticket:1561126172589301832>', components: [row] }
+        ));
+
+        return reply(interaction, 'Ticket System Configured', `Ticket category set to ${category}. The support panel has been posted.`);
+      }
+
+      if (command === 'giveaway') {
+        if (!await requireAdmin(interaction)) return;
+        if (interaction.options.getSubcommand() === 'setup') return interaction.showModal(giveawayModal());
+        const giveawayId = interaction.options.getString('id');
+        const giveaway = data.giveaways.find(item => item.id === giveawayId && !item.ended);
+        if (!giveaway) return reply(interaction, 'Giveaway not found', 'Check the giveaway ID and try again.', { ephemeral: true });
+        await endGiveaway(giveaway.id);
+        return reply(interaction, 'Giveaway Ended', `Giveaway \`${giveaway.id}\` has been ended.`);
+      }
+
+      if (command === 'roles') {
+        if (!await requireAdmin(interaction)) return;
+        if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles)) {
+          return reply(interaction, 'Missing Permission', 'Rover needs Manage Roles permission to configure roles.', { ephemeral: true });
+        }
+
+        const roleDefinitions = [
+          { name: 'Owner', permissions: [PermissionFlagsBits.Administrator] },
+          { name: 'Administrator', permissions: [PermissionFlagsBits.ManageGuild, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageMessages] },
+          { name: 'Moderator', permissions: [PermissionFlagsBits.KickMembers, PermissionFlagsBits.BanMembers, PermissionFlagsBits.ModerateMembers, PermissionFlagsBits.ManageMessages] },
+          { name: 'Support', permissions: [PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageMessages] },
+          { name: 'Customer', permissions: [] },
+          { name: 'Verified', permissions: [] },
+          { name: 'Member', permissions: [] },
+          { name: 'Muted', permissions: [] }
+        ];
+
+        const created = [];
+        const updated = [];
+        const botMember = interaction.guild.members.me;
+
+        for (const definition of roleDefinitions) {
+          let role = interaction.guild.roles.cache.find(item => item.name === definition.name);
+          if (role && botMember && role.position >= botMember.roles.highest.position) {
+            continue;
+          }
+          if (!role) {
+            role = await interaction.guild.roles.create({
+              name: definition.name,
+              permissions: definition.permissions,
+              reason: 'Rover role setup'
+            });
+            created.push(definition.name);
+          } else {
+            await role.setPermissions(definition.permissions, 'Rover role setup');
+            updated.push(definition.name);
+          }
+        }
+
+        data.rolesSetupCompleted = true;
+        await saveData();
+
+        return reply(interaction, 'Role Setup Complete',
+          `**Created:** ${created.join(', ') || 'None'}\n**Updated:** ${updated.join(', ') || 'None'}\n\nRover does not automatically assign the Owner role or any other role to members. Review role positions and permissions after setup.`);
+      }
+
+      if (command === 'review-settings') {
+        if (!await requireAdmin(interaction)) return;
+        const channel = interaction.options.getChannel('channel');
+        data.reviewConfig.channelId = channel.id;
+        await saveData();
+        return reply(interaction, 'Review Channel Saved', `Customer reviews will be published in ${channel}.`);
+      }
+
+      if (command === 'review') {
+        const options = productOptions();
+        if (!options.length) return reply(interaction, 'Reviews', 'There are no products to review.', { ephemeral: true });
+        return interaction.reply({
+          content: 'Choose the product you received.',
+          components: [new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder().setCustomId('review_product_select').setPlaceholder('Choose a product').addOptions(options)
+          )],
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      if (command === 'review-remove') {
+        if (!await requireAdmin(interaction)) return;
+        const reviewId = interaction.options.getString('id');
+        const index = data.reviews.findIndex(review => review.id === reviewId);
+        if (index === -1) return reply(interaction, 'Review Not Found', 'No review matches that ID.', { ephemeral: true });
+        const [review] = data.reviews.splice(index, 1);
+        await saveData();
+        return reply(interaction, 'Review Removed', `Review \`${review.id}\` was removed from Rover's stored reviews. Its already-posted message, if any, may need to be deleted separately.`);
+      }
+
+      if (command === 'announce') {
+        if (!await requireAdmin(interaction)) return;
+        const message = clean(interaction.options.getString('message'), 1900);
+        if (!message) return reply(interaction, 'Empty Announcement', 'Please provide announcement text.', { ephemeral: true });
+
+        const channel = interaction.channel;
+        if (!channel?.isTextBased() || !channel.guild) {
+          return reply(interaction, 'Invalid Channel', 'Use this command in a server text channel.', { ephemeral: true });
+        }
+
+        const botMember = interaction.guild.members.me;
+        if (!botMember.permissionsIn(channel).has(PermissionFlagsBits.ManageWebhooks)) {
+          return reply(interaction, 'Missing Permission', 'Rover needs Manage Webhooks permission in this channel.', { ephemeral: true });
+        }
+
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+        let webhook = null;
+        try {
+          const hooks = await channel.fetchWebhooks();
+          webhook = hooks.find(item => item.owner?.id === client.user.id && item.name === FOOTER);
+          if (!webhook) {
+            webhook = await channel.createWebhook({
+              name: FOOTER,
+              avatar: process.env.ROVER_ICON_URL || client.user.displayAvatarURL()
+            });
+          }
+
+          await webhook.send({
+            content: message,
+            username: FOOTER,
+            avatarURL: process.env.ROVER_ICON_URL || client.user.displayAvatarURL(),
+            allowedMentions: { parse: [] }
+          });
+
+          return interaction.editReply({ content: 'Announcement sent.' });
+        } catch (error) {
+          console.error('Announcement failed:', error);
+          return interaction.editReply({ content: 'The announcement could not be sent. Check Rover’s Manage Webhooks permission and the channel settings.' });
+        }
+      }
+
+      if (['ban', 'kick', 'timeout'].includes(command)) {
+        if (!await requireAdmin(interaction)) return;
+        const user = interaction.options.getUser('user');
+        const reason = interaction.options.getString('reason');
+        const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+
+        if (!member) return reply(interaction, 'Member Not Found', 'That user is not a current server member.', { ephemeral: true });
+        if (!member.manageable) return reply(interaction, 'Cannot Moderate Member', 'Discord does not allow Rover to moderate this member. Check the bot role hierarchy.', { ephemeral: true });
+
+        if (command === 'ban') await member.ban({ reason });
+        if (command === 'kick') await member.kick(reason);
+        if (command === 'timeout') await member.timeout(interaction.options.getInteger('minutes') * 60000, reason);
+
+        data.moderation.push({
+          id: id(),
+          action: command,
+          userId: user.id,
+          moderatorId: interaction.user.id,
+          reason,
+          timestamp: Date.now(),
+          guildId: interaction.guildId
+        });
+        await saveData();
+
+        return reply(interaction, 'Moderation Action Complete',
+          `**Action:** ${command}\n**Member:** ${user.tag}\n**Reason:** ${reason}`);
+      }
+    }
+
+    if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === 'information_menu') {
+        const sections = {
+          about: `**Rover Official Store**\nRover helps customers browse products, receive deliveries, access support and participate in giveaways.`,
+          products: `**Products and Purchasing**\nUse \`/purchase\` to browse available products. Read each product's description and follow its listed purchase information.`,
+          delivery: `**Delivery and Order Support**\nUse \`/my-orders\` to view recorded deliveries. If you need help, open a support ticket.`,
+          giveaways: `**Giveaways and Winners**\nUse the entry button on an active giveaway. Winners are selected when the giveaway ends.`,
+          safety: `**Account Safety and Privacy**\nNever share passwords, authentication codes or sensitive account information. Only use purchase links you trust.`,
+          terms: `**Terms, Refunds and Disputes**\nCheck the store's stated terms before purchasing. If there is a problem with an order, contact support through a ticket.`
+        };
+        return interaction.update(panelPayload('Rover Information', sections[interaction.values[0]] || 'Section unavailable.'));
+      }
+
+      if (interaction.customId === 'product_edit_select') {
+        if (!await requireAdmin(interaction)) return;
+        const product = productById(interaction.values[0]);
+        if (!product) return interaction.reply({ content: 'Product not found.', flags: MessageFlags.Ephemeral });
+        return interaction.showModal(productModal(product));
+      }
+
+      if (interaction.customId === 'product_delete_select') {
+        if (!await requireAdmin(interaction)) return;
+        const product = productById(interaction.values[0]);
+        if (!product) return interaction.reply({ content: 'Product not found.', flags: MessageFlags.Ephemeral });
+        product.active = false;
+        await saveData();
+        return interaction.update({ content: `Product **${product.name}** has been removed from the active catalogue.`, components: [] });
+      }
+
+      if (interaction.customId === 'purchase_select') {
+        const product = productById(interaction.values[0]);
+        if (!product || product.active === false) return reply(interaction, 'Product Unavailable', 'This product is no longer available.', { ephemeral: true });
+
+        const body = [
+          `**Product:** ${product.name}`,
+          `**Price:** ${product.price}`,
+          `**Category:** ${product.category || 'General'}`,
+          `**Description:** ${product.description}`,
+          `**Reviews:** ${averageRating(product.id)}`,
+          product.purchaseUrl ? `**Purchase link:** ${product.purchaseUrl}` : '**Purchase link:** Contact support for purchasing information.'
+        ].join('\n');
+
+        return interaction.update(panelPayload('Product Details', body, { emoji: '<:Shopping:1561126149789323335>' }));
+      }
+
+      if (interaction.customId === 'deliver_product_select') {
+        if (!await requireAdmin(interaction)) return;
+        const product = productById(interaction.values[0]);
+        if (!product) return interaction.reply({ content: 'Product not found.', flags: MessageFlags.Ephemeral });
+
+        const row = new ActionRowBuilder().addComponents(
+          new UserSelectMenuBuilder().setCustomId(`deliver_customer:${product.id}`).setPlaceholder('Choose the customer').setMinValues(1).setMaxValues(1)
+        );
+
+        return interaction.update({ content: `Selected **${product.name}**. Choose the customer to receive it.`, components: [row] });
+      }
+
+      if (interaction.customId.startsWith('deliver_customer:')) {
+        if (!await requireAdmin(interaction)) return;
+        const productId = interaction.customId.split(':')[1];
+        const product = productById(productId);
+        const customerId = interaction.values[0];
+        if (!product) return interaction.update({ content: 'Product not found.', components: [] });
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`deliver_confirm:${product.id}:${customerId}`).setLabel('Confirm Delivery').setStyle(ButtonStyle.Success)
+        );
+
+        return interaction.update({
+          content: `Confirm delivery of **${product.name}** to <@${customerId}>.`,
+          components: [row]
+        });
+      }
+
+      if (interaction.customId === 'review_product_select') {
+        const product = productById(interaction.values[0]);
+        if (!product) return interaction.reply({ content: 'Product not found.', flags: MessageFlags.Ephemeral });
+
+        const delivered = data.deliveries.some(order => order.productId === product.id && order.customerId === interaction.user.id);
+        if (!delivered) {
+          return interaction.update({ content: 'You can only review products recorded as delivered to your account.', components: [] });
+        }
+
+        if (data.reviews.some(review => review.productId === product.id && review.userId === interaction.user.id)) {
+          return interaction.update({ content: 'You have already reviewed this product.', components: [] });
+        }
+
+        return interaction.showModal(reviewModal(product.id));
+      }
+    }
+
+    if (interaction.isUserSelectMenu()) {
+      if (interaction.customId === 'ticket_add_member') {
+        if (!canManageTickets(interaction)) return reply(interaction, 'Permission Denied', 'Only ticket staff can add members.', { ephemeral: true });
+        const ticket = ticketForChannel(interaction.channelId);
+        if (!ticket) return reply(interaction, 'Ticket Not Found', 'This is not an active ticket.', { ephemeral: true });
+        const memberId = interaction.values[0];
+        await interaction.channel.permissionOverwrites.edit(memberId, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
+        return reply(interaction, 'Member Added', `<@${memberId}> can now access this ticket.`, { ephemeral: true });
+      }
+
+      if (interaction.customId.startsWith('deliver_customer:')) {
+        const productId = interaction.customId.split(':')[1];
+        const product = productById(productId);
+        const customerId = interaction.values[0];
+        if (!product) return interaction.reply({ content: 'Product not found.', flags: MessageFlags.Ephemeral });
+        return interaction.update({
+          content: `Confirm delivery of **${product.name}** to <@${customerId}>.`,
+          components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`deliver_confirm:${product.id}:${customerId}`).setLabel('Confirm Delivery').setStyle(ButtonStyle.Success)
+          )]
+        });
+      }
+    }
+
+    if (interaction.isButton()) {
+      if (interaction.customId === 'ticket_open') {
         if (data.ticketBlacklist.includes(interaction.user.id)) {
-          return reply(interaction, 'Ticket Access Restricted', [
-            'You cannot open a support ticket at the moment. Please contact a server administrator.'
-          ]);
+          return reply(interaction, 'Ticket Access Denied', 'You are unable to open a support ticket. Contact a server administrator if you believe this is a mistake.', { ephemeral: true });
         }
 
         const existing = Object.values(data.tickets).find(ticket =>
-          ticket.guildId === interaction.guildId &&
-          ticket.userId === interaction.user.id &&
-          !ticket.closed
+          ticket.userId === interaction.user.id && ticket.guildId === interaction.guildId && !ticket.closed
         );
-
-        if (existing) {
-          return reply(interaction, 'Ticket Already Open', [
-            `You already have an open ticket: <#${existing.channelId}>`
-          ]);
-        }
+        if (existing) return reply(interaction, 'Ticket Already Open', `You already have an open ticket: <#${existing.channelId}>`, { ephemeral: true });
 
         const categoryId = data.ticketConfig.categoryId;
+        if (!categoryId) return reply(interaction, 'Ticket System Not Configured', 'An administrator needs to configure the ticket system first.', { ephemeral: true });
 
-        if (!categoryId) {
-          return reply(interaction, 'Ticket System Not Configured', [
-            'An administrator needs to run `/ticket setup` before tickets can be opened.'
-          ]);
-        }
-
-        const category = await interaction.guild.channels.fetch(categoryId).catch(() => null);
-
-        if (!category || category.type !== ChannelType.GuildCategory) {
-          return reply(interaction, 'Ticket Category Missing', [
-            'The configured ticket category is missing. Ask an administrator to run `/ticket setup` again.'
-          ]);
-        }
-
-        const permissionOverwrites = [
-          {
-            id: interaction.guild.id,
-            deny: [PermissionFlagsBits.ViewChannel]
-          },
-          {
-            id: interaction.user.id,
-            allow: [
-              PermissionFlagsBits.ViewChannel,
-              PermissionFlagsBits.SendMessages,
-              PermissionFlagsBits.ReadMessageHistory,
-              PermissionFlagsBits.AttachFiles,
-              PermissionFlagsBits.EmbedLinks
-            ]
-          },
-          {
-            id: client.user.id,
-            allow: [
-              PermissionFlagsBits.ViewChannel,
-              PermissionFlagsBits.SendMessages,
-              PermissionFlagsBits.ManageChannels,
-              PermissionFlagsBits.ReadMessageHistory
-            ]
-          }
-        ];
-
-        for (const roleName of ['Owner', 'Administrator', 'Moderator', 'Support']) {
-          const roleId = staffRoleId(roleName);
-          if (!roleId) continue;
-
-          permissionOverwrites.push({
-            id: roleId,
-            allow: [
-              PermissionFlagsBits.ViewChannel,
-              PermissionFlagsBits.SendMessages,
-              PermissionFlagsBits.ReadMessageHistory
-            ]
-          });
-        }
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const channel = await interaction.guild.channels.create({
-          name: `ticket-${interaction.user.username}`
-            .toLowerCase()
-            .replace(/[^a-z0-9-]/g, '-')
-            .slice(0, 90),
+          name: `ticket-${interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 90),
           type: ChannelType.GuildText,
-          parent: category.id,
-          permissionOverwrites,
-          reason: `Support ticket opened by ${interaction.user.tag}`
+          parent: categoryId,
+          permissionOverwrites: [
+            { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+            { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles] },
+            { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] }
+          ]
         });
 
-        const ticket = {
-          id: makeId('ticket'),
+        const ticketId = id();
+        data.tickets[ticketId] = {
+          id: ticketId,
           channelId: channel.id,
           guildId: interaction.guildId,
           userId: interaction.user.id,
@@ -1201,95 +793,89 @@ client.on('interactionCreate', async interaction => {
           escalated: false,
           createdAt: Date.now()
         };
-
-        data.tickets[ticket.id] = ticket;
         await saveData();
 
-        await channel.send({
-          components: [
-            makePanel('Rover Support Ticket', [
-              `**Opened by:** ${interaction.user}`,
-              `**Ticket reference:** ${ticket.id}`,
-              '',
-              'Welcome to Rover Support. Please explain the reason for your ticket and provide any relevant order or delivery reference.',
-              '',
-              '**What happens next?**',
-              'An authorised staff member will review your request and respond when available.',
-              '',
-              '**Privacy and security**',
-              'Do not send passwords, authentication codes, account tokens or full payment-card details.',
-              '',
-              'Use the controls below to claim the ticket, open staff tools or close the ticket when your issue has been resolved.'
-            ]),
-            ticketButtons(ticket)
-          ],
-          flags: MessageFlags.IsComponentsV2,
-          allowedMentions: { parse: [] }
-        });
+        await channel.send(panelPayload('Support Ticket',
+          `Hello <@${interaction.user.id}>. Please describe the issue and include any relevant order details.\n\n**Ticket ID:** \`${ticketId}\`\nOur support team will respond as soon as possible.`,
+          { emoji: '<:Ticket:1561126172589301832>', components: [ticketButtons(ticketId)] }
+        ));
 
-        return reply(interaction, 'Support Ticket Created', [
-          `Your private ticket is ready: ${channel}`,
-          'Please continue your conversation inside the ticket channel.'
-        ]);
+        return interaction.editReply({ content: `Your ticket has been created: ${channel}` });
       }
 
-      if (interaction.customId === 'rover:ticket:claim') {
-        const ticket = ticketForChannel(interaction.channelId);
+      if (interaction.customId.startsWith('giveaway_enter:')) {
+        const giveawayId = interaction.customId.split(':')[1];
+        const giveaway = data.giveaways.find(item => item.id === giveawayId && !item.ended);
+        if (!giveaway) return reply(interaction, 'Giveaway Closed', 'This giveaway has ended or no longer exists.', { ephemeral: true });
+        if (giveaway.entrants.includes(interaction.user.id)) {
+          return reply(interaction, 'Already Entered', 'You have already entered this giveaway.', { ephemeral: true });
+        }
+        giveaway.entrants.push(interaction.user.id);
+        await saveData();
+        return reply(interaction, 'Entry Confirmed', 'You have successfully entered the giveaway.', { ephemeral: true });
+      }
 
-        if (!ticket) {
-          return reply(interaction, 'Ticket Not Found', [
-            'This channel is not an active Rover ticket.'
-          ]);
+      if (interaction.customId.startsWith('deliver_confirm:')) {
+        if (!await requireAdmin(interaction)) return;
+        const [, productId, customerId] = interaction.customId.split(':');
+        const product = productById(productId);
+        if (!product) return reply(interaction, 'Product Not Found', 'This product no longer exists.', { ephemeral: true });
+
+        await interaction.deferUpdate();
+
+        const order = {
+          id: id(),
+          productId: product.id,
+          productName: product.name,
+          customerId,
+          staffId: interaction.user.id,
+          guildId: interaction.guildId,
+          timestamp: Date.now()
+        };
+
+        data.deliveries.push(order);
+        data.orders.push(order);
+        await saveData();
+
+        const customer = await client.users.fetch(customerId).catch(() => null);
+        if (customer) {
+          await customer.send(panelPayload('Product Delivery',
+            `A product has been delivered to you by Rover Official Store.\n\n**Product:** ${product.name}\n**Price:** ${product.price}\n**Order ID:** \`${order.id}\`\n\nIf you need help, open a support ticket in the store server.`,
+            { emoji: '<:Box:1561126239173869628>' }
+          )).catch(() => null);
         }
 
-        if (!canManageTickets(interaction.member)) {
-          return reply(interaction, 'Permission Required', [
-            'Only authorised support staff can claim tickets.'
-          ]);
-        }
+        return interaction.editReply({
+          content: `Delivery recorded for <@${customerId}>. Order ID: \`${order.id}\`. ${customer ? 'A DM was attempted.' : 'The customer could not be fetched.'}`,
+          components: []
+        });
+      }
 
-        if (ticket.claimedBy) {
-          return reply(interaction, 'Already Claimed', [
-            `This ticket has already been claimed by <@${ticket.claimedBy}>.`
-          ]);
-        }
-
+      if (interaction.customId.startsWith('ticket_claim:')) {
+        const ticketId = interaction.customId.split(':')[1];
+        const ticket = data.tickets[ticketId];
+        if (!ticket || ticket.closed) return reply(interaction, 'Ticket Closed', 'This ticket is no longer active.', { ephemeral: true });
+        if (!canManageTickets(interaction)) return reply(interaction, 'Permission Denied', 'Only ticket staff can claim tickets.', { ephemeral: true });
         ticket.claimedBy = interaction.user.id;
-        ticket.claimedAt = Date.now();
         await saveData();
-
-        await interaction.message.edit({
-          components: [
-            makePanel('Rover Support Ticket', [
-              `**Opened by:** <@${ticket.userId}>`,
-              `**Claimed by:** ${interaction.user}`,
-              `**Ticket reference:** ${ticket.id}`,
-              '',
-              'A staff member is now handling this ticket. Please keep all relevant information in this channel.'
-            ]),
-            ticketButtons(ticket)
-          ],
-          flags: MessageFlags.IsComponentsV2
-        });
-
-        return reply(interaction, 'Ticket Claimed', [
-          'You are now responsible for handling this ticket.'
-        ]);
+        return reply(interaction, 'Ticket Claimed', `This ticket has been claimed by ${interaction.user}.`);
       }
 
-      if (interaction.customId === 'rover:ticket:close') {
-        const ticket = ticketForChannel(interaction.channelId);
+      if (interaction.customId.startsWith('ticket_staff:')) {
+        const ticketId = interaction.customId.split(':')[1];
+        if (!canManageTickets(interaction)) return reply(interaction, 'Permission Denied', 'Only ticket staff can use the staff panel.', { ephemeral: true });
+        return reply(interaction, 'Ticket Staff Panel', 'Choose a staff action below.', {
+          ephemeral: true,
+          components: [ticketStaffButtons(ticketId)]
+        });
+      }
 
-        if (!ticket) {
-          return reply(interaction, 'Ticket Not Found', [
-            'This channel is not an active Rover ticket.'
-          ]);
-        }
-
-        if (interaction.user.id !== ticket.userId && !canManageTickets(interaction.member)) {
-          return reply(interaction, 'Permission Required', [
-            'Only the ticket opener or authorised staff can close this ticket.'
-          ]);
+      if (interaction.customId.startsWith('ticket_close:')) {
+        const ticketId = interaction.customId.split(':')[1];
+        const ticket = data.tickets[ticketId];
+        if (!ticket || ticket.closed) return reply(interaction, 'Ticket Closed', 'This ticket is already closed.', { ephemeral: true });
+        if (interaction.user.id !== ticket.userId && !canManageTickets(interaction)) {
+          return reply(interaction, 'Permission Denied', 'Only the ticket opener or staff can close this ticket.', { ephemeral: true });
         }
 
         ticket.closed = true;
@@ -1298,632 +884,128 @@ client.on('interactionCreate', async interaction => {
         await saveData();
 
         await interaction.channel.permissionOverwrites.edit(ticket.userId, {
-          SendMessages: false
-        }).catch(() => {});
-
-        await interaction.channel.send({
-          components: [
-            makePanel('Ticket Closed', [
-              `This ticket was closed by ${interaction.user}.`,
-              'The channel will remain available for authorised staff to review.'
-            ])
-          ],
-          flags: MessageFlags.IsComponentsV2
-        });
-
-        return reply(interaction, 'Ticket Closed', [
-          'The ticket has been marked as closed.'
-        ]);
-      }
-
-      if (interaction.customId === 'rover:ticket:modpanel') {
-        const ticket = ticketForChannel(interaction.channelId);
-
-        if (!ticket) {
-          return reply(interaction, 'Ticket Not Found', [
-            'This channel is not an active Rover ticket.'
-          ]);
-        }
-
-        if (!canManageTickets(interaction.member)) {
-          return reply(interaction, 'Permission Required', [
-            'Only authorised staff can use the ticket staff panel.'
-          ]);
-        }
-
-        return reply(interaction, 'Ticket Staff Panel', [
-          `**Ticket opener:** <@${ticket.userId}>`,
-          `**Claimed by:** ${ticket.claimedBy ? `<@${ticket.claimedBy}>` : 'Nobody yet'}`,
-          `**Escalated:** ${ticket.escalated ? 'Yes' : 'No'}`,
-          '',
-          'Choose a staff action below.',
-          '',
-          '**Escalate:** Give the configured escalation role access to the ticket.',
-          '**Rename:** Change the ticket channel name.',
-          '**Add Member:** Grant a selected member access.',
-          '**Blacklist Opener:** Prevent the ticket opener from opening future tickets.'
-        ], true, [ticketStaffButtons()]);
-      }
-
-      if (interaction.customId === 'rover:ticket:escalate') {
-        const ticket = ticketForChannel(interaction.channelId);
-
-        if (!ticket || !canManageTickets(interaction.member)) {
-          return reply(interaction, 'Permission Required', [
-            'Only authorised staff can escalate a ticket.'
-          ]);
-        }
-
-        const escalationRoleId = process.env.TICKET_ESCALATION_ROLE_ID;
-
-        if (!escalationRoleId) {
-          return reply(interaction, 'Escalation Role Not Configured', [
-            'Add `TICKET_ESCALATION_ROLE_ID` to your environment variables and restart Rover.'
-          ]);
-        }
-
-        await interaction.channel.permissionOverwrites.edit(escalationRoleId, {
           ViewChannel: true,
-          SendMessages: true,
+          SendMessages: false,
           ReadMessageHistory: true
-        });
+        }).catch(console.error);
+
+        await interaction.channel.send(panelPayload('Ticket Closed',
+          `This ticket was closed by ${interaction.user}. Staff can reopen it manually if needed.\n\n**Ticket ID:** \`${ticket.id}\``
+        ));
+
+        return reply(interaction, 'Ticket Closed', 'This support ticket has been closed.', { ephemeral: true });
+      }
+
+      if (interaction.customId.startsWith('ticket_escalate:')) {
+        const ticketId = interaction.customId.split(':')[1];
+        const ticket = data.tickets[ticketId];
+        if (!ticket || ticket.closed) return reply(interaction, 'Ticket Unavailable', 'This ticket is not active.', { ephemeral: true });
+        if (!canManageTickets(interaction)) return reply(interaction, 'Permission Denied', 'Only ticket staff can escalate tickets.', { ephemeral: true });
 
         ticket.escalated = true;
-        ticket.escalatedBy = interaction.user.id;
-        ticket.escalatedAt = Date.now();
         await saveData();
 
+        const roleId = staffRoleId();
         await interaction.channel.send({
-          components: [
-            makePanel('Ticket Escalated', [
-              `This ticket was escalated by ${interaction.user}.`,
-              `<@&${escalationRoleId}> has been given access to assist.`
-            ])
-          ],
-          flags: MessageFlags.IsComponentsV2,
-          allowedMentions: { parse: [] }
+          content: roleId ? `<@&${roleId}> This ticket has been escalated by ${interaction.user}.` : `This ticket has been escalated by ${interaction.user}. Configure TICKET_ESCALATION_ROLE_ID to notify an escalation role.`,
+          allowedMentions: { roles: roleId ? [roleId] : [] }
         });
-
-        return reply(interaction, 'Ticket Escalated', [
-          'The configured escalation role has been given access to the ticket.'
-        ]);
+        return reply(interaction, 'Ticket Escalated', 'The escalation has been recorded.');
       }
 
-      if (interaction.customId === 'rover:ticket:rename') {
-        const ticket = ticketForChannel(interaction.channelId);
-
-        if (!ticket || !canManageTickets(interaction.member)) {
-          return reply(interaction, 'Permission Required', [
-            'Only authorised staff can rename tickets.'
-          ]);
-        }
-
-        const modal = new ModalBuilder()
-          .setCustomId('rover:ticket:rename:modal')
-          .setTitle('Rename Ticket')
-          .addComponents(
-            textInput('name', 'New channel name', true, interaction.channel.name, 90)
-          );
-
-        return interaction.showModal(modal);
+      if (interaction.customId.startsWith('ticket_rename:')) {
+        const ticketId = interaction.customId.split(':')[1];
+        if (!canManageTickets(interaction)) return reply(interaction, 'Permission Denied', 'Only ticket staff can rename tickets.', { ephemeral: true });
+        return interaction.showModal(modal('Rename Ticket', `ticket_rename_modal:${ticketId}`, [
+          textInput('name', 'New channel name', TextInputStyle.Short, true, 'ticket-new-name', 90)
+        ]));
       }
 
-      if (interaction.customId === 'rover:ticket:addmember') {
-        const ticket = ticketForChannel(interaction.channelId);
-
-        if (!ticket || !canManageTickets(interaction.member)) {
-          return reply(interaction, 'Permission Required', [
-            'Only authorised staff can add members to tickets.'
-          ]);
-        }
-
-        return reply(interaction, 'Add a Member to This Ticket', [
-          'Select the member who should receive access to this ticket.'
-        ], true, [
-          new ContainerBuilder().setAccentColor(PURPLE)
-            .addActionRowComponents(new ActionRowBuilder().addComponents(
-              new UserSelectMenuBuilder()
-                .setCustomId('rover:ticket:addmember:select')
-                .setPlaceholder('Choose a member')
-                .setMinValues(1)
-                .setMaxValues(1)
-            ))
-        ]);
-      }
-
-      if (interaction.customId === 'rover:ticket:blacklist') {
-        const ticket = ticketForChannel(interaction.channelId);
-
-        if (!ticket || !canBlacklistTickets(interaction.member)) {
-          return reply(interaction, 'Permission Required', [
-            'Only administrators, owners and authorised moderators can blacklist ticket openers.'
-          ]);
-        }
-
-        const alreadyBlacklisted = data.ticketBlacklist.includes(ticket.userId);
-
-        if (alreadyBlacklisted) {
-          data.ticketBlacklist = data.ticketBlacklist.filter(id => id !== ticket.userId);
-        } else {
-          data.ticketBlacklist.push(ticket.userId);
-        }
-
-        await saveData();
-
-        return reply(interaction,
-          alreadyBlacklisted ? 'Ticket Blacklist Updated' : 'Ticket Opener Blacklisted',
-          [
-            `<@${ticket.userId}> ${alreadyBlacklisted ? 'has been removed from' : 'has been added to'} the ticket blacklist.`,
-            'This setting controls whether the user can open new Rover tickets.'
-          ]
-        );
-      }
-
-      if (interaction.customId === 'rover:giveaway:join') {
-        const giveaway = data.giveaways.find(g =>
-          g.messageId === interaction.message.id && !g.ended
-        );
-
-        if (!giveaway) {
-          return reply(interaction, 'Giveaway Ended', [
-            'This giveaway is no longer accepting entries.'
-          ]);
-        }
-
-        if (giveaway.entrants.includes(interaction.user.id)) {
-          return reply(interaction, 'Already Entered', [
-            'You have already entered this giveaway.'
-          ]);
-        }
-
-        giveaway.entrants.push(interaction.user.id);
-        await saveData();
-        await updateGiveawayMessage(giveaway, false);
-
-        return reply(interaction, 'Giveaway Entry Confirmed', [
-          `You have entered the giveaway for **${giveaway.prize}**.`,
-          `**Current entries:** ${giveaway.entrants.length}`,
-          'Good luck!'
-        ]);
-      }
-    }
-
-    if (interaction.isStringSelectMenu()) {
-      const selected = interaction.values[0];
-
-      if (interaction.customId === 'rover:product:view') {
-        const product = productById(selected);
-
-        if (!product || product.active === false) {
-          return reply(interaction, 'Product Unavailable', [
-            'This product is no longer available in the catalogue.'
-          ]);
-        }
-
-        return reply(interaction, product.name, [
-          `**Price:** ${product.price || 'Not specified'}`,
-          `**Category:** ${product.category || 'Uncategorised'}`,
-          '',
-          '**Product Description**',
-          product.description || 'No description has been provided.',
-          '',
-          product.purchaseUrl
-            ? `**Purchase link:** ${product.purchaseUrl}`
-            : 'A purchase link has not been added yet.',
-          '',
-          'If you need help with this product, open a Rover support ticket.'
-        ]);
-      }
-
-      if (interaction.customId === 'rover:product:edit:select') {
-        if (!await requireAdmin(interaction)) return;
-
-        const product = productById(selected);
-        if (!product) {
-          return reply(interaction, 'Product Not Found', [
-            'That product no longer exists.'
-          ]);
-        }
-
-        return interaction.showModal(productModal(product));
-      }
-
-      if (interaction.customId === 'rover:product:delete:select') {
-        if (!await requireAdmin(interaction)) return;
-
-        const product = productById(selected);
-        if (!product) {
-          return reply(interaction, 'Product Not Found', [
-            'That product no longer exists.'
-          ]);
-        }
-
-        data.products = data.products.filter(p => p.id !== selected);
-        await saveData();
-
-        return reply(interaction, 'Product Removed', [
-          `**${product.name}** has been removed from the active catalogue.`,
-          'Historical delivery and review records have been retained.'
-        ]);
-      }
-
-      if (interaction.customId === 'rover:delivery:product') {
-        if (!await requireAdmin(interaction)) return;
-
-        const product = productById(selected);
-        if (!product || product.active === false) {
-          return reply(interaction, 'Product Unavailable', [
-            'That product cannot currently be delivered.'
-          ]);
-        }
-
-        return reply(interaction, 'Choose the Customer', [
-          `**Selected product:** ${product.name}`,
-          `**Price:** ${product.price || 'Not specified'}`,
-          '',
-          'Select the customer who should receive this product.'
-        ], true, [
-          new ContainerBuilder().setAccentColor(PURPLE)
-            .addActionRowComponents(new ActionRowBuilder().addComponents(
-              new UserSelectMenuBuilder()
-                .setCustomId(`rover:delivery:customer:${product.id}`)
-                .setPlaceholder('Step 2 — Select customer')
-                .setMinValues(1)
-                .setMaxValues(1)
-            ))
-        ]);
-      }
-
-      if (interaction.customId.startsWith('rover:delivery:product-confirm:')) {
-        return reply(interaction, 'Delivery Confirmation', [
-          'Please reopen `/give-product` and complete the delivery panel.'
-        ]);
-      }
-
-      if (interaction.customId === 'rover:information:select') {
-        const sections = {
-          about: {
-            title: 'About Rover Official Store',
-            text: [
-              '**Who we are**',
-              'Rover Official Store is a product catalogue and delivery service. Product information is provided through the store so customers can review available items before purchasing.',
-              '',
-              '**How the store works**',
-              'Browse the catalogue, select the product you are interested in and carefully read its description, category, price and purchase link. If you have questions, ask staff before purchasing.',
-              '',
-              '**Customer support**',
-              'The support ticket system is the recommended way to discuss product questions, order issues and delivery problems privately with authorised staff.',
-              '',
-              '**Important**',
-              'Only use purchase links provided through trusted store channels. Do not share passwords, account tokens or verification codes with anyone.'
-            ].join('\n')
-          },
-          products: {
-            title: 'Products and Purchasing',
-            text: [
-              '**Browsing the catalogue**',
-              'Use `/purchase` to browse active products. Select a product from the dropdown to see its description, price, category and any available purchase link.',
-              '',
-              '**Product categories**',
-              '**Assets:** Items or resources presented as assets in the store catalogue.',
-              '**Maps:** Map-related products listed by the store.',
-              '**Scripts:** Script-related products listed by the store.',
-              '',
-              '**Before purchasing**',
-              'Read the full product description and check the listed price. Confirm that the product suits your needs before proceeding to an external purchase link.',
-              '',
-              '**Purchase links**',
-              'Only follow links provided by trusted Rover store channels. If a link appears broken, unexpected or suspicious, do not proceed. Open a support ticket instead.',
-              '',
-              '**Product availability**',
-              'The active catalogue can change. A product appearing in an old message does not guarantee that it remains available.'
-            ].join('\n')
-          },
-          delivery: {
-            title: 'Delivery and Order Support',
-            text: [
-              '**How delivery works**',
-              'Once authorised staff record a delivery through the Rover delivery panel, Rover stores a delivery record and attempts to send the customer a private message with the product details.',
-              '',
-              '**Delivery messages**',
-              'A successful delivery DM may include the product name, description, price, purchase link and delivery reference. If private messages are disabled, Rover may be unable to contact you.',
-              '',
-              '**I have not received my product**',
-              'Open a support ticket and explain what you purchased, when you purchased it and what is missing. Include your order or delivery reference if you have one.',
-              '',
-              '**Please be patient**',
-              'Staff may need time to review order details and verify the delivery record. Avoid opening multiple tickets for the same issue.',
-              '',
-              '**Keep your account safe**',
-              'Support staff do not need your password, authentication codes or account token to review an order.'
-            ].join('\n')
-          },
-          giveaways: {
-            title: 'Giveaways and Winners',
-            text: [
-              '**Entering a giveaway**',
-              'Find an active Rover giveaway post and press **Enter Giveaway**. Rover records your entry and updates the entry counter on the original post.',
-              '',
-              '**Entry counter**',
-              'The entry count represents the number of recorded participants. It is separate from the winner field, which remains unselected until the giveaway ends.',
-              '',
-              '**How winners are selected**',
-              'When the giveaway ends, Rover randomly selects up to the configured number of winners from the recorded entries. The original giveaway post remains visible and its winner field is updated.',
-              '',
-              '**Claiming a prize**',
-              'Winners may receive a direct message from Rover. If you win, follow the instructions provided by the store team to arrange your prize.',
-              '',
-              '**Stay alert**',
-              'Never pay a fee to someone claiming they can guarantee a win. Never share your password, account token or verification codes.'
-            ].join('\n')
-          },
-          safety: {
-            title: 'Account Safety and Privacy',
-            text: [
-              '**Protect your account**',
-              'Never share your password, account token, authentication code or recovery codes with anyone. Be cautious of unexpected messages, suspicious links and people impersonating store staff.',
-              '',
-              '**Trusted links**',
-              'Use links shared in official store channels. If you are unsure whether a link is genuine, ask staff in a support ticket before opening it.',
-              '',
-              '**Private support tickets**',
-              'Tickets are designed to restrict access to the ticket opener and authorised staff. Do not post personal information that is not necessary to resolve your issue.',
-              '',
-              '**Messages and DMs**',
-              'Rover may attempt to DM you about a recorded delivery or giveaway win. Direct messages can fail if your privacy settings prevent them.',
-              '',
-              '**Reporting concerns**',
-              'If you believe someone is impersonating Rover or attempting to steal your account, preserve relevant evidence and contact server staff through an official channel.'
-            ].join('\n')
-          },
-          terms: {
-            title: 'Terms, Refunds and Disputes',
-            text: [
-              '**Before placing an order**',
-              'Review the product description, price, category and purchase terms before completing a purchase. If anything is unclear, ask for clarification first.',
-              '',
-              '**Refunds and disputes**',
-              'Refund requests and purchase disputes are reviewed by the store team according to the applicable purchase terms and circumstances. Submitting a request does not automatically guarantee a refund.',
-              '',
-              '**Delivery problems**',
-              'If a delivery is missing, incomplete or incorrect, open a ticket and provide relevant order information so staff can investigate.',
-              '',
-              '**Fair use**',
-              'Customers should communicate respectfully, provide accurate information and avoid abusing support or giveaway systems.',
-              '',
-              '**Account security**',
-              'Rover staff should never need your password or authentication codes to resolve a store issue.',
-              '',
-              '**Need assistance?**',
-              'Open a Rover support ticket to ask about a product, delivery, refund request or store dispute.'
-            ].join('\n')
-          }
-        };
-
-        const section = sections[selected] || sections.about;
-
-        return reply(interaction, section.title, [section.text]);
-      }
-
-      if (interaction.customId === 'rover:review:product') {
-        const product = productById(selected);
-
-        if (!product || product.active === false) {
-          return reply(interaction, 'Product Unavailable', [
-            'This product is no longer available to review.'
-          ]);
-        }
-
-        const delivered = data.deliveries.some(delivery =>
-          delivery.productId === product.id &&
-          delivery.customerId === interaction.user.id
-        );
-
-        if (!delivered) {
-          return reply(interaction, 'Verified Delivery Required', [
-            'Only customers with a recorded delivery for this product can submit a review.',
-            'If you believe your delivery is missing from the records, open a support ticket.'
-          ]);
-        }
-
-        if (data.reviews.some(review =>
-          review.productId === product.id &&
-          review.userId === interaction.user.id
-        )) {
-          return reply(interaction, 'Review Already Submitted', [
-            'You have already submitted a review for this product.'
-          ]);
-        }
-
-        return interaction.showModal(reviewModal(product.id));
-      }
-
-      if (interaction.customId === 'rover:giveaway:end:select') {
-        if (!await requireAdmin(interaction)) return;
-
-        const giveaway = data.giveaways.find(g =>
-          g.id === selected && !g.ended
-        );
-
-        if (!giveaway) {
-          return reply(interaction, 'Giveaway Not Found', [
-            'That giveaway has already ended or no longer exists.'
-          ]);
-        }
-
-        await finishGiveaway(giveaway);
-
-        return reply(interaction, 'Giveaway Ended', [
-          `The giveaway for **${giveaway.prize}** has ended.`,
-          'The original post has been updated with the selected winner or winners.'
-        ]);
-      }
-    }
-
-    if (interaction.isUserSelectMenu()) {
-      const userId = interaction.values[0];
-
-      if (interaction.customId.startsWith('rover:delivery:customer:')) {
-        if (!await requireAdmin(interaction)) return;
-
-        const productId = interaction.customId.slice('rover:delivery:customer:'.length);
-        const product = productById(productId);
-
-        if (!product || product.active === false) {
-          return reply(interaction, 'Product Unavailable', [
-            'The selected product is no longer available.'
-          ]);
-        }
-
-        return reply(interaction, 'Confirm Product Delivery', [
-          `**Product:** ${product.name}`,
-          `**Customer:** <@${userId}>`,
-          `**Price:** ${product.price || 'Not specified'}`,
-          '',
-          'Confirming will record the delivery and attempt to send the customer a DM containing the product details.'
-        ], true, [
-          new ContainerBuilder().setAccentColor(PURPLE)
-            .addActionRowComponents(new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId(`rover:delivery:confirm:${product.id}:${userId}`)
-                .setLabel('Confirm Delivery')
-                .setStyle(ButtonStyle.Primary)
-            ))
-        ]);
-      }
-
-      if (interaction.customId === 'rover:ticket:addmember:select') {
-        const ticket = ticketForChannel(interaction.channelId);
-
-        if (!ticket || !canManageTickets(interaction.member)) {
-          return reply(interaction, 'Permission Required', [
-            'Only authorised staff can add members to a ticket.'
-          ]);
-        }
-
-        await interaction.channel.permissionOverwrites.edit(userId, {
-          ViewChannel: true,
-          SendMessages: true,
-          ReadMessageHistory: true
+      if (interaction.customId.startsWith('ticket_add:')) {
+        const ticketId = interaction.customId.split(':')[1];
+        if (!canManageTickets(interaction)) return reply(interaction, 'Permission Denied', 'Only ticket staff can add members.', { ephemeral: true });
+        return interaction.reply({
+          content: `Choose a member to add to ticket \`${ticketId}\`.`,
+          components: [new ActionRowBuilder().addComponents(
+            new UserSelectMenuBuilder().setCustomId('ticket_add_member').setPlaceholder('Choose a member').setMinValues(1).setMaxValues(1)
+          )],
+          flags: MessageFlags.Ephemeral
         });
+      }
 
-        await interaction.channel.send({
-          components: [
-            makePanel('Ticket Access Updated', [
-              `<@${userId}> has been granted access to this ticket by ${interaction.user}.`
-            ])
-          ],
-          flags: MessageFlags.IsComponentsV2,
-          allowedMentions: { parse: [] }
-        });
+      if (interaction.customId.startsWith('ticket_blacklist:')) {
+        const ticketId = interaction.customId.split(':')[1];
+        const ticket = data.tickets[ticketId];
+        if (!ticket) return reply(interaction, 'Ticket Not Found', 'This ticket no longer exists.', { ephemeral: true });
+        if (!canManageTickets(interaction)) return reply(interaction, 'Permission Denied', 'Only ticket staff can manage the ticket blacklist.', { ephemeral: true });
 
-        return reply(interaction, 'Member Added', [
-          `<@${userId}> has been granted access to this ticket.`
-        ]);
+        if (data.ticketBlacklist.includes(ticket.userId)) {
+          data.ticketBlacklist = data.ticketBlacklist.filter(userId => userId !== ticket.userId);
+          await saveData();
+          return reply(interaction, 'Blacklist Updated', `<@${ticket.userId}> has been removed from the ticket blacklist.`, { ephemeral: true });
+        }
+
+        data.ticketBlacklist.push(ticket.userId);
+        await saveData();
+        return reply(interaction, 'Blacklist Updated', `<@${ticket.userId}> has been blocked from opening new tickets.`, { ephemeral: true });
       }
     }
 
     if (interaction.isModalSubmit()) {
-      if (interaction.customId === 'rover:product:create' ||
-          interaction.customId.startsWith('rover:product:edit:')) {
+      if (interaction.customId === 'product_create' || interaction.customId.startsWith('product_edit:')) {
         if (!await requireAdmin(interaction)) return;
 
-        const name = interaction.fields.getTextInputValue('name').trim();
-        const price = interaction.fields.getTextInputValue('price').trim();
-        const description = interaction.fields.getTextInputValue('description').trim();
-        const purchaseUrl = interaction.fields.getTextInputValue('url').trim();
-        const category = interaction.fields.getTextInputValue('category').trim();
+        const editing = interaction.customId.startsWith('product_edit:');
+        const productId = editing ? interaction.customId.split(':')[1] : null;
+        const product = editing ? productById(productId) : null;
+        if (editing && !product) return reply(interaction, 'Product Not Found', 'This product no longer exists.', { ephemeral: true });
 
-        if (purchaseUrl) {
-          try {
-            const parsed = new URL(purchaseUrl);
-            if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Invalid protocol');
-          } catch {
-            return reply(interaction, 'Invalid Purchase URL', [
-              'Enter a valid URL beginning with `https://` or `http://`, or leave the field empty.'
-            ]);
-          }
+        const name = clean(interaction.fields.getTextInputValue('name'), 100);
+        const price = clean(interaction.fields.getTextInputValue('price'), 100);
+        const description = clean(interaction.fields.getTextInputValue('description'), 1000);
+        const purchaseUrl = clean(interaction.fields.getTextInputValue('purchaseUrl'), 500);
+        const category = clean(interaction.fields.getTextInputValue('category'), 100);
+
+        if (purchaseUrl && !/^https?:\/\/\S+$/i.test(purchaseUrl)) {
+          return reply(interaction, 'Invalid Purchase URL', 'Enter a complete URL beginning with http:// or https://, or leave it blank.', { ephemeral: true });
         }
 
-        if (interaction.customId === 'rover:product:create') {
-          const product = {
-            id: makeId('product'),
+        if (product) {
+          Object.assign(product, { name, price, description, purchaseUrl, category, active: true, updatedAt: Date.now() });
+        } else {
+          data.products.push({
+            id: id(),
             name,
             price,
             description,
             purchaseUrl,
             category,
             active: true,
-            createdBy: interaction.user.id,
-            createdAt: Date.now()
-          };
-
-          data.products.push(product);
-          await saveData();
-
-          return reply(interaction, 'Product Created Successfully', [
-            `**Product:** ${product.name}`,
-            `**Product ID:** ${product.id}`,
-            `**Price:** ${product.price}`,
-            `**Category:** ${product.category}`,
-            '',
-            'The product is now available in the `/purchase` catalogue.'
-          ]);
+            createdAt: Date.now(),
+            createdBy: interaction.user.id
+          });
         }
-
-        const id = interaction.customId.slice('rover:product:edit:'.length);
-        const product = productById(id);
-
-        if (!product) {
-          return reply(interaction, 'Product Not Found', [
-            'The product you were editing no longer exists.'
-          ]);
-        }
-
-        Object.assign(product, {
-          name,
-          price,
-          description,
-          purchaseUrl,
-          category,
-          updatedAt: Date.now(),
-          updatedBy: interaction.user.id
-        });
 
         await saveData();
-
-        return reply(interaction, 'Product Updated Successfully', [
-          `**Product:** ${product.name}`,
-          `**Product ID:** ${product.id}`,
-          `**Price:** ${product.price}`,
-          `**Category:** ${product.category}`,
-          '',
-          'The updated details will appear in the product catalogue.'
-        ]);
+        return reply(interaction, editing ? 'Product Updated' : 'Product Created',
+          `**${name}**\n**Price:** ${price}\n**Category:** ${category}\n\nThe product is now ${product ? 'updated' : 'available'} in the catalogue.`);
       }
 
-      if (interaction.customId === 'rover:giveaway:create') {
+      if (interaction.customId === 'giveaway_create') {
         if (!await requireAdmin(interaction)) return;
 
-        const prize = interaction.fields.getTextInputValue('prize').trim();
+        const prize = clean(interaction.fields.getTextInputValue('prize'), 100);
+        const details = clean(interaction.fields.getTextInputValue('details'), 1000);
         const duration = parseDuration(interaction.fields.getTextInputValue('duration'));
         const winnerCount = Number(interaction.fields.getTextInputValue('winners'));
-        const details = interaction.fields.getTextInputValue('details').trim();
 
-        if (!duration) {
-          return reply(interaction, 'Invalid Duration', [
-            'Enter a duration such as `30m`, `2h` or `1d`. The maximum is seven days.'
-          ]);
-        }
-
+        if (!duration) return reply(interaction, 'Invalid Duration', 'Use a duration such as 30m, 2h or 3d. The maximum is 7 days.', { ephemeral: true });
         if (!Number.isInteger(winnerCount) || winnerCount < 1 || winnerCount > 10) {
-          return reply(interaction, 'Invalid Winner Count', [
-            'Choose a whole number from 1 to 10.'
-          ]);
+          return reply(interaction, 'Invalid Winner Count', 'Choose between 1 and 10 winners.', { ephemeral: true });
         }
 
         const giveaway = {
-          id: makeId('giveaway'),
+          id: id(),
           prize,
           details,
           winnerCount,
@@ -1938,82 +1020,37 @@ client.on('interactionCreate', async interaction => {
           createdAt: Date.now()
         };
 
-        const message = await interaction.channel.send({
-          components: [
-            makePanel('Rover Giveaway', [
-              `**Prize:** ${prize}`,
-              details ? `**Details:**\n${details}` : '',
-              '**Entries:** 0',
-              '**Winner:** Not selected yet',
-              `**Ends:** <t:${Math.floor(giveaway.endsAt / 1000)}:R>`,
-              `**Winners to draw:** ${winnerCount}`
-            ]),
-            new ContainerBuilder().setAccentColor(PURPLE)
-              .addActionRowComponents(new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                  .setCustomId('rover:giveaway:join')
-                  .setLabel('Enter Giveaway')
-                  .setStyle(ButtonStyle.Primary)
-              ))
-          ],
-          flags: MessageFlags.IsComponentsV2,
-          allowedMentions: { parse: [] }
-        });
-
-        giveaway.messageId = message.id;
         data.giveaways.push(giveaway);
+        await saveData();
+
+        const message = await interaction.channel.send(giveawayPayload(giveaway));
+        giveaway.messageId = message.id;
         await saveData();
         scheduleGiveaway(giveaway);
 
-        return reply(interaction, 'Giveaway Published', [
-          `The giveaway for **${prize}** is now live.`,
-          `**Ends:** <t:${Math.floor(giveaway.endsAt / 1000)}:R>`,
-          'The original giveaway post will remain after the draw and show the selected winner.'
-        ]);
+        return reply(interaction, 'Giveaway Created', `Giveaway \`${giveaway.id}\` has been posted and will end <t:${Math.floor(giveaway.endsAt / 1000)}:R>.`);
       }
 
-      if (interaction.customId.startsWith('rover:review:submit:')) {
-        const productId = interaction.customId.slice('rover:review:submit:'.length);
+      if (interaction.customId.startsWith('review_submit:')) {
+        const productId = interaction.customId.split(':')[1];
         const product = productById(productId);
+        if (!product) return reply(interaction, 'Product Not Found', 'This product no longer exists.', { ephemeral: true });
 
-        if (!product) {
-          return reply(interaction, 'Product Not Found', [
-            'The selected product no longer exists.'
-          ]);
+        const delivered = data.deliveries.some(order => order.productId === productId && order.customerId === interaction.user.id);
+        if (!delivered) return reply(interaction, 'Review Not Allowed', 'You can only review products recorded as delivered to your account.', { ephemeral: true });
+        if (data.reviews.some(review => review.productId === productId && review.userId === interaction.user.id)) {
+          return reply(interaction, 'Already Reviewed', 'You have already reviewed this product.', { ephemeral: true });
         }
 
-        const delivered = data.deliveries.some(delivery =>
-          delivery.productId === product.id &&
-          delivery.customerId === interaction.user.id
-        );
-
-        if (!delivered) {
-          return reply(interaction, 'Verified Delivery Required', [
-            'A recorded delivery is required before a review can be submitted.'
-          ]);
-        }
-
-        if (data.reviews.some(review =>
-          review.productId === product.id &&
-          review.userId === interaction.user.id
-        )) {
-          return reply(interaction, 'Review Already Submitted', [
-            'You have already reviewed this product.'
-          ]);
-        }
-
-        const rating = Number(interaction.fields.getTextInputValue('rating').trim());
-        const comment = interaction.fields.getTextInputValue('comment').trim();
-
+        const rating = Number(interaction.fields.getTextInputValue('rating'));
+        const comment = clean(interaction.fields.getTextInputValue('comment'), 1000);
         if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
-          return reply(interaction, 'Invalid Rating', [
-            'Your rating must be a whole number from 1 to 5.'
-          ]);
+          return reply(interaction, 'Invalid Rating', 'Your rating must be a whole number from 1 to 5.', { ephemeral: true });
         }
 
         const review = {
-          id: makeId('review'),
-          productId: product.id,
+          id: id(),
+          productId,
           productName: product.name,
           userId: interaction.user.id,
           rating,
@@ -2023,132 +1060,17 @@ client.on('interactionCreate', async interaction => {
 
         data.reviews.push(review);
         await saveData();
+        await publishReview(interaction, review).catch(console.error);
 
-        const channel = data.reviewConfig.channelId
-          ? await client.channels.fetch(data.reviewConfig.channelId).catch(() => null)
-          : null;
-
-        if (channel?.isTextBased()) {
-          await channel.send({
-            components: [
-              makePanel('Verified Customer Review', [
-                `**Product:** ${product.name}`,
-                `**Rating:** ${rating}/5`,
-                `**Customer:** ${interaction.user.tag}`,
-                '',
-                '**Review**',
-                comment
-              ])
-            ],
-            flags: MessageFlags.IsComponentsV2,
-            allowedMentions: { parse: [] }
-          });
-        }
-
-        return reply(interaction, 'Review Submitted', [
-          `Thank you for reviewing **${product.name}**.`,
-          `**Your rating:** ${rating}/5`,
-          'Your review has been recorded.'
-        ]);
+        return reply(interaction, 'Review Submitted', `Thank you for reviewing **${product.name}**.\n\n**Your rating:** ${rating}/5\n**Product average:** ${averageRating(productId)}`);
       }
 
-      if (interaction.customId === 'rover:ticket:rename:modal') {
-        const ticket = ticketForChannel(interaction.channelId);
-
-        if (!ticket || !canManageTickets(interaction.member)) {
-          return reply(interaction, 'Permission Required', [
-            'Only authorised staff can rename tickets.'
-          ]);
-        }
-
-        const name = interaction.fields.getTextInputValue('name')
-          .toLowerCase()
-          .replace(/[^a-z0-9-]/g, '-')
-          .replace(/-+/g, '-')
-          .slice(0, 90);
-
-        if (!name) {
-          return reply(interaction, 'Invalid Channel Name', [
-            'Enter a valid channel name.'
-          ]);
-        }
-
-        await interaction.channel.setName(name);
-
-        return reply(interaction, 'Ticket Renamed', [
-          `The ticket channel is now named **${name}**.`
-        ]);
-      }
-
-      if (interaction.customId.startsWith('rover:announce:modal:')) {
-        if (!await requireAdmin(interaction)) return;
-
-        const [, , , channelId, type] = interaction.customId.split(':');
-        const channel = await client.channels.fetch(channelId).catch(() => null);
-
-        if (!channel?.isTextBased()) {
-          return reply(interaction, 'Channel Not Found', [
-            'The announcement destination is no longer available.'
-          ]);
-        }
-
-        const message = interaction.fields.getTextInputValue('message').trim();
-        const username = interaction.fields.getTextInputValue('username').trim() || 'Rover Official Store';
-        const avatar = interaction.fields.getTextInputValue('avatar').trim();
-
-        if (avatar) {
-          try {
-            if (!['http:', 'https:'].includes(new URL(avatar).protocol)) throw new Error();
-          } catch {
-            return reply(interaction, 'Invalid Avatar URL', [
-              'Use a valid HTTP or HTTPS image URL, or leave the avatar field empty.'
-            ]);
-          }
-        }
-
-        if (type === 'webhook') {
-          if (!interaction.guild.members.me?.permissionsIn(channel).has(PermissionFlagsBits.ManageWebhooks)) {
-            return reply(interaction, 'Webhook Permission Required', [
-              'Rover needs the **Manage Webhooks** permission in the destination channel to publish webhook announcements.'
-            ]);
-          }
-
-          let webhook;
-
-          try {
-            const webhooks = await channel.fetchWebhooks();
-            webhook = webhooks.find(hook => hook.owner?.id === client.user.id);
-
-            if (!webhook) {
-              webhook = await channel.createWebhook({
-                name: 'Rover Announcements',
-                reason: 'Rover announcement system'
-              });
-            }
-
-            await webhook.send({
-              content: message,
-              username: clean(username, 80),
-              avatarURL: avatar || undefined,
-              allowedMentions: { parse: [] }
-            });
-          } catch (error) {
-            console.error('Webhook announcement failed:', error);
-
-            return reply(interaction, 'Webhook Announcement Failed', [
-              'Rover could not publish the webhook message. Check that it has Manage Webhooks permission in the destination channel.'
-            ]);
-          }
-        } else {
-          await channel.send({
-            content: message,
-            allowedMentions: { parse: [] }
-          });
-        }
-
-        return reply(interaction, 'Announcement Published', [
-          `Your ${type === 'webhook' ? 'webhook' : 'normal'} message has been sent to ${channel}.`
-        ]);
+      if (interaction.customId.startsWith('ticket_rename_modal:')) {
+        if (!canManageTickets(interaction)) return reply(interaction, 'Permission Denied', 'Only ticket staff can rename tickets.', { ephemeral: true });
+        const newName = clean(interaction.fields.getTextInputValue('name'), 90).toLowerCase().replace(/[^a-z0-9-]/g, '-');
+        if (!newName) return reply(interaction, 'Invalid Name', 'Please provide a valid channel name.', { ephemeral: true });
+        await interaction.channel.setName(newName);
+        return reply(interaction, 'Ticket Renamed', `This ticket is now named **${newName}**.`);
       }
     }
   } catch (error) {
@@ -2157,109 +1079,20 @@ client.on('interactionCreate', async interaction => {
     try {
       if (interaction.deferred || interaction.replied) {
         await interaction.followUp({
-          components: [
-            makePanel('Something Went Wrong', [
-              'Rover could not complete that action.',
-              'Please try again. If the problem continues, check the bot console for the error details.'
-            ])
-          ],
-          flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+          content: 'Something went wrong while processing that action. Please check the bot console for details.',
+          flags: MessageFlags.Ephemeral
         });
       } else {
-        await reply(interaction, 'Something Went Wrong', [
-          'Rover could not complete that action.',
-          'Please try again. If the problem continues, check the bot console for the error details.'
-        ]);
+        await interaction.reply({
+          content: 'Something went wrong while processing that action. Please check the bot console for details.',
+          flags: MessageFlags.Ephemeral
+        });
       }
     } catch {}
   }
 });
 
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isButton()) return;
-  if (!interaction.customId.startsWith('rover:delivery:confirm:')) return;
-
-  try {
-    if (!isAdmin(interaction)) {
-      return reply(interaction, 'Permission Required', [
-        'Only authorised staff can confirm product deliveries.'
-      ]);
-    }
-
-    const parts = interaction.customId.split(':');
-    const productId = parts[3];
-    const customerId = parts[4];
-
-    const product = productById(productId);
-    if (!product || product.active === false) {
-      return reply(interaction, 'Product Unavailable', [
-        'The selected product no longer exists or is inactive.'
-      ]);
-    }
-
-    const customer = await client.users.fetch(customerId).catch(() => null);
-
-    if (!customer) {
-      return reply(interaction, 'Customer Not Found', [
-        'Rover could not find that customer.'
-      ]);
-    }
-
-    const delivery = {
-      id: makeId('delivery'),
-      productId: product.id,
-      productName: product.name,
-      customerId: customer.id,
-      staffId: interaction.user.id,
-      guildId: interaction.guildId,
-      timestamp: Date.now()
-    };
-
-    data.deliveries.push(delivery);
-    await saveData();
-
-    let dmSent = true;
-
-    try {
-      await customer.send({
-        components: [
-          makePanel('Your Rover Product Delivery', [
-            `Hello ${customer.username},`,
-            '',
-            `Your product **${product.name}** has been delivered.`,
-            '',
-            '**Product details**',
-            product.description || 'No description provided.',
-            '',
-            `**Price:** ${product.price || 'Not specified'}`,
-            `**Category:** ${product.category || 'Uncategorised'}`,
-            product.purchaseUrl ? `**Product link:** ${product.purchaseUrl}` : '',
-            `**Delivery reference:** ${delivery.id}`,
-            '',
-            'If you need assistance, please open a support ticket in the Rover server.'
-          ])
-        ],
-        flags: MessageFlags.IsComponentsV2
-      });
-    } catch {
-      dmSent = false;
-    }
-
-    return reply(interaction, 'Product Delivery Recorded', [
-      `**Customer:** ${customer.tag}`,
-      `**Product:** ${product.name}`,
-      `**Delivery reference:** ${delivery.id}`,
-      dmSent
-        ? 'The customer has been sent a delivery DM.'
-        : 'The delivery was recorded, but the customer’s DMs could not be reached.'
-    ]);
-  } catch (error) {
-    console.error('Delivery confirmation error:', error);
-
-    return reply(interaction, 'Delivery Failed', [
-      'Rover could not complete the delivery. Check the bot console for details.'
-    ]).catch(() => {});
-  }
-});
+client.on('error', error => console.error('Discord client error:', error));
+process.on('unhandledRejection', error => console.error('Unhandled rejection:', error));
 
 client.login(TOKEN);
